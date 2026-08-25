@@ -32,14 +32,532 @@
       <p class="lead">Prometheus 메트릭, Grafana 대시보드, ELK 로그 파이프라인, 알럿 설계.</p>
       <div class="hero-meta">
         <span>예상 <b>20</b>시간</span>
-        <span><span class="badge">예정</span></span>
+        <span><span class="badge done">완료</span></span>
       </div>
     </section>
 
-    <div class="placeholder">
-      <h2>아직 작성 중입니다</h2>
-      <p>이 단계의 본문은 준비 중입니다. 학습 계획에 따라 순서대로 채워집니다.</p>
-      <p><a href="../../plan.html">전체 학습 계획 보기 →</a></p>
+    <h2 id="goals">이 단계를 끝내면</h2>
+    <ul>
+      <li>사용자보다 먼저 장애를 알 수 있다.</li>
+      <li>메트릭·로그·트레이스를 구분해 쓰고, 각각 어떤 질문에 답하는지 안다.</li>
+      <li>PromQL로 "지금 어떤 상태인가"를 직접 물어볼 수 있다.</li>
+      <li>사람을 깨울 만한 알럿과 그렇지 않은 알럿을 구분해 설계할 수 있다.</li>
+      <li>대시보드 한 장으로 원인 후보를 좁힐 수 있다.</li>
+    </ul>
+
+    <h2 id="prereq">준비물</h2>
+    <ul>
+      <li>Stage 7의 Docker와 Compose. 이 단계의 스택은 컨테이너로 띄운다.</li>
+      <li>Stage 5–8의 <code>weatherboard</code>.</li>
+    </ul>
+    <div class="callout">
+      <p class="callout-title">💡 이 단계는 도구보다 질문이 중요하다</p>
+      <p>Prometheus와 Grafana는 수단이다. 진짜 배울 것은 <b>무엇을 측정할 것인가</b>와
+      <b>언제 사람을 깨울 것인가</b>다. 도구는 회사마다 다르지만(Datadog, CloudWatch, Loki…)
+      이 두 질문은 어디서나 같다.</p>
+    </div>
+
+    <nav class="toc">
+      <p>목차</p>
+      <ol>
+        <li><a href="#three">메트릭·로그·트레이스</a></li>
+        <li><a href="#what">무엇을 측정할 것인가</a></li>
+        <li><a href="#prometheus">Prometheus의 데이터 모델</a></li>
+        <li><a href="#instrument">애플리케이션 계측</a></li>
+        <li><a href="#promql">PromQL</a></li>
+        <li><a href="#grafana">대시보드</a></li>
+        <li><a href="#alert">알럿 설계</a></li>
+        <li><a href="#logs">로그 파이프라인</a></li>
+        <li><a href="#slo">SLI와 SLO</a></li>
+      </ol>
+    </nav>
+
+    <h2 id="three">1. 메트릭·로그·트레이스</h2>
+    <p>세 가지는 서로 다른 질문에 답한다. 하나로 전부 하려 들면 비용이 폭발하거나
+    필요할 때 답이 없다.</p>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th></th><th>메트릭</th><th>로그</th><th>트레이스</th></tr></thead>
+        <tbody>
+          <tr><td>답하는 질문</td><td>지금 상태가 어떤가</td><td>그때 무슨 일이 있었나</td><td>이 요청이 어디서 느렸나</td></tr>
+          <tr><td>형태</td><td>시간에 따른 숫자</td><td>타임스탬프가 붙은 사건</td><td>요청 하나의 구간별 시간</td></tr>
+          <tr><td>비용</td><td>싸다 (집계된 숫자)</td><td>비싸다 (양이 많다)</td><td>중간 (대개 샘플링)</td></tr>
+          <tr><td>강점</td><td>알럿, 추세, 대시보드</td><td>구체적 원인, 디버깅</td><td>분산 시스템의 병목</td></tr>
+          <tr><td>약점</td><td>"왜"를 모른다</td><td>집계와 알럿에 부적합</td><td>계측 부담</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>실무의 순서는 이렇다. <b>메트릭</b>이 이상을 알리고 → <b>대시보드</b>로 범위를 좁히고 →
+    <b>로그</b>에서 구체적 원인을 찾고 → 필요하면 <b>트레이스</b>로 어느 구간인지 짚는다.
+    이 순서가 Stage 2의 장애 분류와 같은 구조다.</p>
+
+    <h2 id="what">2. 무엇을 측정할 것인가</h2>
+    <p>측정할 수 있는 것은 무한하다. 시작점으로 검증된 두 묶음이 있다.</p>
+
+    <h3>RED — 요청을 처리하는 서비스</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>지표</th><th>뜻</th><th>왜 보나</th></tr></thead>
+        <tbody>
+          <tr><td><b>R</b>ate</td><td>초당 요청 수</td><td>트래픽이 사라졌거나 폭증했나</td></tr>
+          <tr><td><b>E</b>rrors</td><td>실패한 요청 비율</td><td>사용자가 실제로 실패를 겪나</td></tr>
+          <tr><td><b>D</b>uration</td><td>응답 시간 분포</td><td>느려졌나</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>USE — 자원</h3>
+    <p>CPU, 메모리, 디스크, 네트워크 각각에 대해
+    <b>U</b>tilization(얼마나 쓰나) · <b>S</b>aturation(대기가 쌓이나) · <b>E</b>rrors를 본다.</p>
+
+    <div class="callout warn">
+      <p class="callout-title">⚠ 평균 응답 시간은 거짓말을 한다</p>
+      <p>요청 100개 중 99개가 10ms, 1개가 10초면 평균은 약 110ms다. 괜찮아 보인다.
+      하지만 그 1명의 사용자는 10초를 기다렸다. <b>백분위수</b>를 봐야 한다 —
+      p50(중앙값), p95, p99. 알럿은 대개 p95나 p99에 건다.</p>
+    </div>
+
+    <h2 id="prometheus">3. Prometheus의 데이터 모델</h2>
+    <p>Prometheus는 <b>당겨 온다</b>(pull). 각 대상이 <code>/metrics</code> 경로로 현재 값을
+    내놓으면, Prometheus가 주기적으로 긁어 간다. 이 방식 덕분에 대상이 사라지면
+    "긁을 수 없다"는 사실 자체가 신호가 된다.</p>
+    <pre><code># /metrics 응답은 이렇게 생겼다
+http_requests_total{method="GET",path="/",status="200"} 1027
+http_requests_total{method="GET",path="/",status="500"} 3
+http_request_duration_seconds_bucket{le="0.1"} 980
+http_request_duration_seconds_bucket{le="0.5"} 1020
+http_request_duration_seconds_bucket{le="+Inf"} 1030</code></pre>
+    <p>이름 뒤 중괄호 안이 <b>라벨</b>이다. 같은 메트릭을 라벨로 쪼개 볼 수 있다 —
+    이것이 Prometheus의 핵심이다.</p>
+
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>타입</th><th>성격</th><th>예</th></tr></thead>
+        <tbody>
+          <tr><td><code>counter</code></td><td>증가만 한다 (재시작 시 0으로)</td><td>총 요청 수, 총 에러 수</td></tr>
+          <tr><td><code>gauge</code></td><td>오르내린다</td><td>현재 메모리, 큐 길이</td></tr>
+          <tr><td><code>histogram</code></td><td>구간별 개수 — 백분위 계산용</td><td>응답 시간 분포</td></tr>
+          <tr><td><code>summary</code></td><td>클라이언트에서 백분위 계산</td><td>집계가 안 되니 histogram을 선호</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="callout warn">
+      <p class="callout-title">⚠ 라벨에 고유값을 넣지 않는다</p>
+      <p>라벨 값의 조합마다 별도의 시계열이 생긴다. 사용자 ID나 요청 ID를 라벨로 넣으면
+      시계열이 수백만 개가 되어 <b>Prometheus가 메모리를 다 쓰고 죽는다.</b>
+      이것을 카디널리티 폭발이라고 한다. 라벨은 <b>값의 종류가 적고 유한한 것</b>만
+      (메서드, 상태 코드, 엔드포인트 이름). 경로도 <code>/user/123</code>이 아니라
+      <code>/user/:id</code>로 정규화해야 한다.</p>
+    </div>
+
+    <h2 id="instrument">4. 애플리케이션 계측</h2>
+    <p>Stage 5의 <code>weatherboard</code>에 메트릭을 붙인다.</p>
+    <pre><code>pip install prometheus-client</code></pre>
+    <pre><code># weatherboard/metrics.py
+from prometheus_client import Counter, Histogram, Gauge
+
+REQUESTS = Counter(
+    "weatherboard_requests_total",
+    "총 요청 수",
+    ["path", "status"],            # 라벨은 값 종류가 적은 것만
+)
+
+LATENCY = Histogram(
+    "weatherboard_request_duration_seconds",
+    "요청 처리 시간",
+    ["path"],
+    buckets=(0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0),
+)
+
+UPSTREAM_UP = Gauge(
+    "weatherboard_upstream_up",
+    "날씨 API 호출 성공 여부 (1/0)",
+)</code></pre>
+    <pre><code># app.py 안에서
+import time
+from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
+
+class Handler(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path == "/metrics":
+            body = generate_latest()
+            self.send_response(200)
+            self.send_header("Content-Type", CONTENT_TYPE_LATEST)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+
+        started = time.perf_counter()
+        status = 200
+        try:
+            ...  # 기존 처리
+        finally:
+            LATENCY.labels(path=self.path).observe(time.perf_counter() - started)
+            REQUESTS.labels(path=self.path, status=str(status)).inc()</code></pre>
+    <p><code>finally</code>에 둔 것이 중요하다. 예외가 나도 기록되어야
+    <b>에러율이 실제 에러율</b>이 된다.</p>
+
+    <h3>내가 안 만든 것들 — exporter</h3>
+    <p>Nginx, PostgreSQL, 리눅스 호스트는 Prometheus 형식으로 말하지 않는다.
+    exporter가 통역한다.</p>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>대상</th><th>exporter</th><th>얻는 것</th></tr></thead>
+        <tbody>
+          <tr><td>리눅스 호스트</td><td><code>node_exporter</code></td><td>CPU, 메모리, 디스크, 네트워크</td></tr>
+          <tr><td>컨테이너</td><td><code>cAdvisor</code></td><td>컨테이너별 자원 사용</td></tr>
+          <tr><td>Nginx</td><td><code>nginx-prometheus-exporter</code></td><td>연결 수, 요청 수</td></tr>
+          <tr><td>블랙박스 점검</td><td><code>blackbox_exporter</code></td><td>밖에서 본 응답 여부와 시간</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>스택 띄우기</h3>
+    <pre><code># compose.observability.yaml
+services:
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    ports: ["9090:9090"]
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - promdata:/prometheus
+
+  grafana:
+    image: grafana/grafana:11.2.0
+    ports: ["3000:3000"]
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: "${GRAFANA_PASSWORD:?설정 필요}"
+    volumes:
+      - grafanadata:/var/lib/grafana
+
+  node-exporter:
+    image: prom/node-exporter:v1.8.2
+    pid: host
+    volumes: ["/:/host:ro,rslave"]
+    command: ["--path.rootfs=/host"]
+
+volumes:
+  promdata:
+  grafanadata:</code></pre>
+    <pre><code># prometheus.yml
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: weatherboard
+    static_configs:
+      - targets: ["app:8000"]
+
+  - job_name: node
+    static_configs:
+      - targets: ["node-exporter:9100"]</code></pre>
+    <p>Stage 7의 볼륨이 여기서 필요한 이유가 분명하다 — 컨테이너를 재시작할 때마다
+    지표 이력이 사라지면 추세를 볼 수 없다.</p>
+
+    <h2 id="promql">5. PromQL</h2>
+    <p>처음에는 낯설지만, 실무에서 쓰는 패턴은 몇 개뿐이다.</p>
+    <pre><code># 지금 값
+weatherboard_upstream_up
+
+# 초당 요청 수 — counter에는 반드시 rate()를 씌운다
+rate(weatherboard_requests_total[5m])
+
+# 에러율 (0~1)
+sum(rate(weatherboard_requests_total{status=~"5.."}[5m]))
+  / sum(rate(weatherboard_requests_total[5m]))
+
+# p95 응답 시간
+histogram_quantile(0.95,
+  sum(rate(weatherboard_request_duration_seconds_bucket[5m])) by (le))
+
+# 경로별로 나눠서
+sum(rate(weatherboard_requests_total[5m])) by (path)
+
+# 디스크가 4시간 뒤 가득 찰까 (Stage 1의 그 문제를 예측으로)
+predict_linear(node_filesystem_avail_bytes{mountpoint="/"}[6h], 4*3600) &lt; 0</code></pre>
+
+    <div class="callout warn">
+      <p class="callout-title">⚠ counter를 그냥 그리지 않는다</p>
+      <p><code>http_requests_total</code>을 그대로 그래프에 넣으면 계속 올라가는 직선만 보인다.
+      의미 있는 것은 <b>변화율</b>이다. counter에는 항상 <code>rate()</code>나
+      <code>increase()</code>를 씌운다. 그리고 <code>rate()</code>의 구간은
+      스크레이프 간격의 <b>4배 이상</b>으로 잡는다(15s 간격이면 최소 1m, 보통 5m).</p>
+    </div>
+
+    <h2 id="grafana">6. 대시보드</h2>
+    <p>대시보드는 예쁘라고 만드는 게 아니라 <b>장애 때 5초 안에 상황을 파악</b>하려고 만든다.
+    좋은 대시보드는 위에서 아래로 읽힌다.</p>
+    <ol>
+      <li><b>맨 위</b> — 지금 정상인가? (에러율, p95 지연, 요청 수 — 큰 숫자 세 개)</li>
+      <li><b>가운데</b> — 어디가 문제인가? (경로별·인스턴스별로 쪼갠 그래프)</li>
+      <li><b>아래</b> — 자원은 괜찮은가? (CPU, 메모리, 디스크)</li>
+    </ol>
+    <div class="callout">
+      <p class="callout-title">💡 패널을 줄이는 것이 개선이다</p>
+      <p>패널이 40개인 대시보드는 아무도 읽지 않는다. 장애 상황에서 눈이 갈 곳이 없기 때문이다.
+      <b>한 화면에 들어오는 8~12개</b>로 유지하고, 세부는 별도 대시보드로 내린다.
+      "이 패널이 빨개지면 나는 무엇을 할 것인가"에 답할 수 없는 패널은 지운다.</p>
+    </div>
+    <p>Grafana 대시보드는 JSON으로 내보낼 수 있다. <b>저장소에 커밋하자</b> —
+    사람이 손으로 만든 대시보드는 그 사람이 떠나면 사라진다. Stage 10의
+    "코드로 관리한다"가 여기에도 적용된다.</p>
+
+    <h2 id="alert">7. 알럿 설계</h2>
+    <p>이 절이 이 단계에서 가장 중요하다. <b>나쁜 알럿은 없는 것만 못하다</b> —
+    사람들이 무시하기 시작하면 진짜 장애도 무시된다.</p>
+
+    <pre><code># alerts.yml
+groups:
+  - name: weatherboard
+    rules:
+      - alert: HighErrorRate
+        expr: |
+          sum(rate(weatherboard_requests_total{status=~"5.."}[5m]))
+            / sum(rate(weatherboard_requests_total[5m])) &gt; 0.05
+        for: 10m                          # 10분간 지속될 때만 — 순간 스파이크 무시
+        labels:
+          severity: page                  # 사람을 깨운다
+        annotations:
+          summary: "에러율 5% 초과 ({{ $value | humanizePercentage }})"
+          runbook: "https://github.com/3r15/devops/blob/main/RUNBOOK.md#higherrorrate"
+
+      - alert: UpstreamDown
+        expr: weatherboard_upstream_up == 0
+        for: 15m
+        labels:
+          severity: ticket                # 업무 시간에 처리
+        annotations:
+          summary: "날씨 API 호출이 15분째 실패 중"
+
+      - alert: DiskWillFill
+        expr: predict_linear(node_filesystem_avail_bytes{mountpoint="/"}[6h], 4*3600) &lt; 0
+        for: 30m
+        labels:
+          severity: ticket</code></pre>
+
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>등급</th><th>뜻</th><th>기준</th></tr></thead>
+        <tbody>
+          <tr><td><code>page</code></td><td>새벽에도 깨운다</td><td><b>사용자가 지금 피해를 보고 있고</b> 즉시 조치가 필요하다</td></tr>
+          <tr><td><code>ticket</code></td><td>업무 시간에 본다</td><td>곧 문제가 되지만 지금은 아니다</td></tr>
+          <tr><td>없음</td><td>대시보드에만</td><td>알아두면 좋은 것</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="callout warn">
+      <p class="callout-title">⚠ "CPU 80% 초과"는 좋은 알럿이 아니다</p>
+      <p>CPU가 높은 것 자체는 문제가 아니다 — 자원을 잘 쓰고 있다는 뜻일 수도 있다.
+      사용자가 느려짐을 겪지 않는다면 깨울 이유가 없다. <b>증상에 알럿을 걸고,
+      원인은 대시보드에서 찾는다.</b> 좋은 알럿은 "응답이 느리다", "에러가 난다",
+      "요청이 안 들어온다"처럼 <b>사용자가 겪는 것</b>을 말한다.</p>
+    </div>
+
+    <p>알럿마다 갖춰야 할 것 셋이다.</p>
+    <ul>
+      <li><code>for:</code> — 지속 시간. 순간 스파이크로 깨우지 않는다</li>
+      <li><b>런북 링크</b> — 새벽 3시에 깬 사람이 무엇을 할지 적힌 문서</li>
+      <li><b>명확한 요약</b> — 알림 제목만 보고 심각도를 판단할 수 있어야</li>
+    </ul>
+
+    <h3>알럿 피로를 막는 습관</h3>
+    <ul>
+      <li>발동한 알럿은 <b>전부</b> 회고한다 — 조치가 필요 없었다면 그 알럿을 고치거나 지운다</li>
+      <li>같은 원인의 알럿은 묶는다 (Alertmanager의 grouping)</li>
+      <li>배포 중이나 점검 중에는 silence를 건다</li>
+      <li>월 1회 "이번 달에 울린 알럿 목록"을 보고 정리한다</li>
+    </ul>
+
+    <h2 id="logs">8. 로그 파이프라인</h2>
+    <p>Stage 7에서 "로그는 stdout/stderr로"라고 한 이유가 여기 있다.
+    컨테이너의 표준 출력은 수집기가 자동으로 가져간다.</p>
+    <pre><code>애플리케이션 (stdout)
+  → 수집기 (Promtail / Fluent Bit / Filebeat)
+    → 저장소 (Loki / Elasticsearch / CloudWatch Logs)
+      → 조회 (Grafana / Kibana)</code></pre>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>스택</th><th>성격</th></tr></thead>
+        <tbody>
+          <tr><td>ELK (Elasticsearch + Logstash + Kibana)</td><td>전문 검색이 강하다. 무겁고 운영 부담이 크다</td></tr>
+          <tr><td>Loki + Promtail + Grafana</td><td>라벨만 인덱싱해 가볍고 싸다. Prometheus와 같은 라벨 체계</td></tr>
+          <tr><td>클라우드 매니지드</td><td>운영이 없다. 양이 늘면 비용이 빠르게 는다</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>구조화된 로그</h3>
+    <pre><code># 사람만 읽을 수 있는 로그 — 검색과 집계가 어렵다
+log.info("사용자 %s 요청 실패, 소요 %sms", user_id, elapsed)
+
+# 구조화된 로그 — 필드로 검색·집계된다
+log.info("request_failed", extra={
+    "user_id": user_id,
+    "elapsed_ms": elapsed,
+    "path": path,
+    "status": 500,
+})</code></pre>
+    <p>JSON 형태로 남기면 "status=500이고 elapsed_ms&gt;1000인 것"을 바로 찾을 수 있다.
+    Stage 5에서 <code>logging</code>을 쓰라고 한 것이 이 확장을 염두에 둔 것이다.</p>
+
+    <div class="callout warn">
+      <p class="callout-title">⚠ 로그에 민감정보를 남기지 않는다</p>
+      <p>비밀번호, 토큰, 주민번호, 카드번호. 한 번 로그 저장소에 들어가면
+      여러 시스템으로 복제되고 오래 보관된다. 요청 본문을 통째로 로깅하는 코드가
+      가장 흔한 사고 경로다. 이 주제는 Stage 14에서 이어진다.</p>
+    </div>
+
+    <h3>보존 기간</h3>
+    <p>로그 비용은 <b>보존 기간 × 양</b>이다. 30일이면 대부분의 디버깅에 충분하고,
+    감사 목적의 로그만 따로 오래 보관한다. 기간을 정하지 않으면 무한히 쌓이고,
+    Stage 12에서 본 "조용히 돈이 새는 곳"이 된다.</p>
+
+    <h2 id="slo">9. SLI와 SLO</h2>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>용어</th><th>뜻</th><th>예</th></tr></thead>
+        <tbody>
+          <tr><td><b>SLI</b></td><td>측정하는 지표</td><td>성공 응답 비율, p95 지연</td></tr>
+          <tr><td><b>SLO</b></td><td>목표치</td><td>30일간 성공률 99.9%</td></tr>
+          <tr><td><b>에러 버짓</b></td><td>허용되는 실패량</td><td>99.9%면 30일 중 약 43분</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>SLO의 실용적 가치는 <b>"충분히 안정적인가"를 숫자로 판정</b>하는 데 있다.
+    에러 버짓이 남아 있으면 새 기능을 배포하고, 다 썼으면 안정화에 집중한다 —
+    "더 안정적으로"와 "더 빨리"의 다툼을 감정이 아니라 데이터로 정리하는 장치다.</p>
+    <div class="callout">
+      <p class="callout-title">💡 100%를 목표로 하지 않는다</p>
+      <p>가용성 100%는 불가능하고, 99.99%와 99.9%의 비용 차이는 크다.
+      사용자가 체감하지 못하는 마지막 0.09%에 예산을 쏟는 대신,
+      <b>사용자가 실제로 원하는 수준</b>을 정하는 것이 SLO의 요점이다.</p>
+    </div>
+
+    <h2 id="pitfalls">자주 하는 실수</h2>
+
+    <h3>알럿이 너무 많아 아무도 안 본다</h3>
+    <p>가장 흔하고 가장 위험한 실패다. 진짜 장애가 소음에 묻힌다.
+    치료법은 <b>공격적으로 지우는 것</b>이다. 지난 한 달 알럿 중
+    "받고 아무 조치도 안 한 것"을 전부 삭제하거나 <code>ticket</code>으로 내린다.
+    남길 것은 "이게 울리면 내가 지금 무언가 한다"뿐이다.</p>
+
+    <h3>카디널리티 폭발로 Prometheus가 죽는다</h3>
+    <pre><code># 어떤 메트릭이 시계열을 많이 만드나
+topk(10, count by (__name__)({__name__=~".+"}))</code></pre>
+    <p>라벨에 요청 ID, 사용자 ID, 정규화하지 않은 URL 경로를 넣은 것이 원인이다.
+    Prometheus의 메모리 사용량이 계속 늘다가 OOM으로 죽는다(Stage 8의 그 <code>OOMKilled</code>다).
+    문제 라벨을 제거하고, 경로는 템플릿으로 정규화한다.</p>
+
+    <h3>대시보드는 초록인데 사용자는 못 쓴다</h3>
+    <p>안에서 본 지표만 보고 있는 것이다. 애플리케이션은 200을 반환하지만
+    DNS·로드밸런서·CDN·인증서 중 어딘가가 막혀 있을 수 있다.
+    <b>밖에서 보는 점검</b>(blackbox exporter나 외부 모니터링)을 하나 두면
+    "우리가 보는 것"과 "사용자가 겪는 것"의 차이를 잡을 수 있다.</p>
+
+    <h3>장애 때 로그를 찾을 수 없다</h3>
+    <p>보존 기간이 짧았거나, 인덱스가 없어 검색이 느리거나, 로그가 컨테이너와 함께
+    사라진 경우다. 평소에 <b>실제로 검색해 보는 것</b>이 유일한 예방책이다 —
+    "지난주 화요일 14시의 500 에러"를 지금 찾아보자. 못 찾으면 장애 때도 못 찾는다.</p>
+
+    <h3>메트릭이 사라졌는데 알럿이 안 울린다</h3>
+    <pre><code># 대상이 죽으면 메트릭 자체가 사라져 &gt; 조건은 절대 참이 안 된다
+- alert: TargetDown
+  expr: up == 0            # ← up 메트릭은 Prometheus가 항상 만든다
+  for: 5m
+  labels: { severity: page }
+
+# absent()로 특정 메트릭의 부재를 잡을 수도 있다
+- alert: NoMetrics
+  expr: absent(weatherboard_requests_total)
+  for: 10m</code></pre>
+    <p>"에러율 &gt; 5%" 알럿은 서비스가 <b>완전히 죽으면</b> 울리지 않는다. 요청 자체가 없어
+    분모가 0이기 때문이다. <code>up == 0</code>과 <code>absent()</code>를 함께 걸어야
+    이 구멍이 막힌다.</p>
+
+    <h2 id="exercises">직접 해보기</h2>
+
+    <h3>과제 1 — weatherboard에 메트릭 붙이기</h3>
+    <p><code>/metrics</code> 엔드포인트를 추가하고 RED 세 지표를 노출한다.
+    Prometheus를 띄워 스크레이프되는지 확인한다.</p>
+    <p><b>검증:</b> <code>curl localhost:8000/metrics</code>가 값을 내는가.
+    Prometheus UI의 Targets에서 <code>UP</code>인가.
+    요청을 몇 번 보낸 뒤 <code>rate(weatherboard_requests_total[1m])</code>이 0보다 큰가.</p>
+
+    <h3>과제 2 — 대시보드 한 장</h3>
+    <p>Grafana에 패널 6~8개짜리 대시보드를 만든다. 맨 위에 에러율·p95·요청 수,
+    가운데에 경로별 분해, 아래에 CPU/메모리.</p>
+    <p><b>검증:</b> 패널마다 "이게 이상해지면 나는 무엇을 하나"에 답할 수 있는가.
+    답할 수 없는 패널을 지웠는가. 대시보드 JSON을 저장소에 커밋했는가.</p>
+
+    <h3>과제 3 — 알럿 3개와 런북</h3>
+    <p>의미 있는 알럿 셋을 만든다. 서로 다른 성격이어야 한다 —
+    (1) 사용자 피해(에러율), (2) 예측(디스크), (3) 부재(<code>up == 0</code>).
+    각각에 런북 항목을 쓴다.</p>
+    <p><b>검증:</b> 각 알럿이 왜 그 <code>for:</code> 값인지 설명할 수 있는가.
+    런북에 "무엇을 확인하고 무엇을 실행하는가"가 구체적으로 적혀 있는가
+    (새벽 3시의 나를 위한 문서다).</p>
+
+    <h3>과제 4 — 장애를 만들고 잡기</h3>
+    <p>이 과제가 이 단계의 핵심이다. 다음 셋을 각각 일으키고,
+    <b>알럿이 울리는지</b>와 <b>대시보드에서 원인을 좁힐 수 있는지</b>를 확인한다.</p>
+    <ol>
+      <li>애플리케이션이 500을 반환하게 만든다 → 에러율 알럿</li>
+      <li>인위적 지연(<code>sleep 3</code>)을 넣는다 → p95 상승</li>
+      <li>컨테이너를 아예 죽인다 → <code>up == 0</code> 알럿</li>
+    </ol>
+    <p><b>검증:</b> 3번에서 <b>에러율 알럿이 울리지 않는</b> 것을 확인했는가?
+    (요청이 없으니 분모가 0이다.) 그래서 <code>up == 0</code>이 왜 필요한지 이해했는가.
+    각 경우 알럿이 뜨기까지 몇 분 걸렸는가.</p>
+
+    <h3>과제 5 — 로그에서 찾아내기</h3>
+    <p>과제 4에서 만든 장애의 <b>구체적 원인</b>을 로그에서 찾는다.
+    가능하면 구조화된 로그로 바꾸고 필드로 검색해 본다.</p>
+    <p><b>검증:</b> 메트릭이 알려준 시각으로 로그 범위를 좁혔는가.
+    "메트릭 → 대시보드 → 로그" 순서를 실제로 밟았는가, 아니면 로그부터 뒤졌는가.</p>
+
+    <h2 id="checklist">체크리스트</h2>
+    <p class="muted">브라우저에 저장된다. 끝낸 항목을 표시하며 진행하자.</p>
+    <div class="progress-bar" data-progress-for="stage-13"><i></i></div>
+    <p class="muted"><small data-progress-label></small></p>
+    <ul class="checklist" data-progress="stage-13">
+      <li><input type="checkbox" id="s13-c1"><label for="s13-c1">메트릭·로그·트레이스가 각각 어떤 질문에 답하는지 구분할 수 있다</label></li>
+      <li><input type="checkbox" id="s13-c2"><label for="s13-c2">RED와 USE가 각각 무엇을 보는지 설명할 수 있다</label></li>
+      <li><input type="checkbox" id="s13-c3"><label for="s13-c3">평균 대신 백분위수를 봐야 하는 이유를 예로 설명할 수 있다</label></li>
+      <li><input type="checkbox" id="s13-c4"><label for="s13-c4">counter·gauge·histogram의 차이를 안다</label></li>
+      <li><input type="checkbox" id="s13-c5"><label for="s13-c5">카디널리티 폭발이 무엇이고 왜 위험한지 설명할 수 있다</label></li>
+      <li><input type="checkbox" id="s13-c6"><label for="s13-c6"><code>/metrics</code>를 붙이고 Prometheus가 스크레이프하는 것을 확인했다 (과제 1)</label></li>
+      <li><input type="checkbox" id="s13-c7"><label for="s13-c7">counter에 <code>rate()</code>를 씌워야 하는 이유를 안다</label></li>
+      <li><input type="checkbox" id="s13-c8"><label for="s13-c8"><code>histogram_quantile</code>로 p95를 계산해 봤다</label></li>
+      <li><input type="checkbox" id="s13-c9"><label for="s13-c9">패널 8개 이하의 대시보드를 만들고 JSON을 커밋했다 (과제 2)</label></li>
+      <li><input type="checkbox" id="s13-c10"><label for="s13-c10">"CPU 80%"가 왜 나쁜 알럿인지 설명할 수 있다</label></li>
+      <li><input type="checkbox" id="s13-c11"><label for="s13-c11">성격이 다른 알럿 3개를 만들고 런북을 썼다 (과제 3)</label></li>
+      <li><input type="checkbox" id="s13-c12"><label for="s13-c12">서비스가 완전히 죽으면 에러율 알럿이 안 울린다는 것을 <b>직접 확인했다</b> (과제 4)</label></li>
+      <li><input type="checkbox" id="s13-c13"><label for="s13-c13">세 가지 장애를 만들고 알럿 발동과 대시보드 진단을 확인했다 (과제 4)</label></li>
+      <li><input type="checkbox" id="s13-c14"><label for="s13-c14">구조화된 로그로 필드 검색을 해봤다 (과제 5)</label></li>
+      <li><input type="checkbox" id="s13-c15"><label for="s13-c15">로그 보존 기간을 정했고, 민감정보가 안 들어가는지 확인했다</label></li>
+      <li><input type="checkbox" id="s13-c16"><label for="s13-c16">SLO와 에러 버짓이 무엇을 결정하는 도구인지 설명할 수 있다</label></li>
+    </ul>
+
+    <h2 id="further">더 읽을거리</h2>
+    <ul>
+      <li><a href="https://prometheus.io/docs/introduction/overview/">Prometheus Documentation</a> — 데이터 모델과 PromQL</li>
+      <li><a href="https://prometheus.io/docs/practices/naming/">메트릭 명명 규칙</a> — 이름과 단위를 정하는 관례</li>
+      <li><a href="https://grafana.com/docs/grafana/latest/">Grafana Documentation</a></li>
+      <li><a href="https://grafana.com/docs/loki/latest/">Loki Documentation</a> — 가벼운 로그 스택</li>
+      <li><a href="https://sre.google/workbook/alerting-on-slos/">Google SRE Workbook — Alerting on SLOs</a> — 알럿 설계의 정석</li>
+      <li><a href="https://sre.google/sre-book/service-level-objectives/">SRE Book — Service Level Objectives</a></li>
+      <li><a href="https://opentelemetry.io/docs/">OpenTelemetry</a> — 트레이스까지 가게 될 때</li>
+    </ul>
+
+    <div class="callout ok">
+      <p class="callout-title">✓ 다음 단계로 가기 전에</p>
+      <p>이제 <code>weatherboard</code>가 잘 돌고 있는지 스스로 알 수 있다.
+      마지막 Stage 14에서는 <b>지키는</b> 이야기를 한다 — 지금까지 만든 파이프라인과
+      인프라 곳곳에 이미 보안 관련 경고를 흘려 뒀다. 그것들을 한자리에 모으고,
+      머지 전에 자동으로 막는 장치를 붙인다.</p>
     </div>
 
     <div class="pager">

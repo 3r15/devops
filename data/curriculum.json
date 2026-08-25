@@ -61,7 +61,7 @@
     { "n": 10, "slug": "terraform",     "title": "Infrastructure as Code (Terraform)", "titleKo": "코드형 인프라",    "part": "delivery",    "hours": 20, "status": "done", "summary": "HCL, state, provider/module, plan-apply 워크플로, 드리프트 관리." },
     { "n": 11, "slug": "ansible",       "title": "Configuration Management (Ansible)", "titleKo": "구성 관리",       "part": "delivery",    "hours": 14, "status": "done", "summary": "인벤토리, 플레이북, 롤, 멱등성, 시크릿(vault)." },
     { "n": 12, "slug": "cloud",         "title": "Cloud Platforms (AWS / Azure / GCP)", "titleKo": "클라우드",       "part": "delivery",    "hours": 28, "status": "done", "summary": "IAM, 컴퓨트, 네트워킹(VPC), 스토리지, 매니지드 서비스, 비용 관리." },
-    { "n": 13, "slug": "observability", "title": "Monitoring & Logging",           "titleKo": "모니터링과 로깅",      "part": "operations",  "hours": 20, "status": "planned", "summary": "Prometheus 메트릭, Grafana 대시보드, ELK 로그 파이프라인, 알럿 설계." },
+    { "n": 13, "slug": "observability", "title": "Monitoring & Logging",           "titleKo": "모니터링과 로깅",      "part": "operations",  "hours": 20, "status": "done", "summary": "Prometheus 메트릭, Grafana 대시보드, ELK 로그 파이프라인, 알럿 설계." },
     { "n": 14, "slug": "security",      "title": "Security (DevSecOps Basics)",    "titleKo": "보안",                "part": "operations",  "hours": 18, "status": "planned", "summary": "최소 권한, 시크릿 관리, 취약점 스캔, 공급망 보안, 파이프라인 내 보안 게이트." }
   ]
 }
