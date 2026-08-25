@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>학습 계획 — DevOps Learning Path</title>
+<meta name="description" content="DevOps 학습 경로의 전체 계획, 일정, 집필 순서.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🛠️</text></svg>">
+<link rel="stylesheet" href="assets/css/main.css">
+<script src="assets/js/theme-init.js"></script>
+</head>
+<body>
+<header class="site-header">
+  <div class="wrap">
+    <a class="brand" href="index.html">DevOps<span class="dot">::</span>Path</a>
+    <nav class="site-nav">
+      <a href="index.html#parts">커리큘럼</a>
+      <a href="plan.html">학습 계획</a>
+      <a href="about.html" class="hide-sm">소개</a>
+      <a href="https://github.com/3r15/devops" class="hide-sm">GitHub</a>
+      <button class="theme-toggle" data-theme-toggle type="button" aria-label="테마 전환">☾</button>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <div class="wrap">
+    <p class="crumbs"><a href="index.html">메인</a><span>/</span>학습 계획</p>
+    <section class="hero">
+      <p class="eyebrow">Roadmap</p>
+      <h1>전체 학습 계획</h1>
+      <p class="lead">어떤 순서로, 무엇을, 어떤 기준으로 끝냈다고 볼 것인지. 그리고 이 사이트가
+      어떤 순서로 채워지는지.</p>
+      <div class="hero-meta">
+        <span>총 <b>276</b>시간</span>
+        <span>주 10시간 기준 <b>31</b>주</span>
+        <span><b>14</b>단계 / <b>5</b>파트</span>
+      </div>
+    </section>
+
+    <nav class="toc">
+      <p>목차</p>
+      <ol>
+        <li><a href="#audience">대상과 전제</a></li>
+        <li><a href="#principles">학습 원칙</a></li>
+        <li><a href="#thread">관통 예제 — weatherboard</a></li>
+        <li><a href="#schedule">전체 일정</a></li>
+        <li><a href="#skip">건너뛰기 지침</a></li>
+        <li><a href="#releases">사이트 집필 순서</a></li>
+      </ol>
+    </nav>
+
+    <h2 id="audience">대상과 전제</h2>
+    <div class="table-scroll">
+      <table>
+        <tbody>
+          <tr><th>대상</th><td>터미널을 열어본 적은 있지만 서버를 혼자 운영해본 적은 없는 사람</td></tr>
+          <tr><th>전제 지식</th><td>없음. 파일과 폴더 개념, 그리고 영어 문서를 읽을 인내심 정도</td></tr>
+          <tr><th>필요 환경</th><td>리눅스를 돌릴 수 있는 무언가 — VM, WSL2, 클라우드 프리티어 인스턴스 중 하나</td></tr>
+          <tr><th>끝났을 때</th><td>작은 웹 서비스를 컨테이너로 만들고, 파이프라인으로 배포하고,
+          메트릭과 로그로 상태를 보고, 장애가 났을 때 어디부터 볼지 아는 상태</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2 id="principles">학습 원칙</h2>
+    <div class="grid cols-2">
+      <div class="card">
+        <h3>1. 손이 먼저다</h3>
+        <p>개념 설명은 명령어를 이해하기 위한 최소한만 둔다. 각 단계의 절반 이상은 실습이다.</p>
+      </div>
+      <div class="card">
+        <h3>2. 한 단계 = 하나의 산출물</h3>
+        <p>읽은 것으로는 끝나지 않는다. 스크립트든 매니페스트든 남는 물건으로 끝낸다.</p>
+      </div>
+      <div class="card">
+        <h3>3. 앞 단계 위에 쌓는다</h3>
+        <p>Stage 7의 컨테이너는 Stage 6에서 세운 웹 서버를 담는다. 예제는 하나의 서비스를 계속 키운다.</p>
+      </div>
+      <div class="card">
+        <h3>4. 틀리는 법도 배운다</h3>
+        <p>각 단계에 '자주 하는 실수'를 둔다. 에러 메시지를 먼저 보여주고 읽는 법을 가르친다.</p>
+      </div>
+      <div class="card">
+        <h3>5. 검증 가능한 완료 기준</h3>
+        <p>'이해했다'가 아니라 '이 명령이 이 출력을 내면 통과'로 적는다.</p>
+      </div>
+    </div>
+
+    <h2 id="thread">관통 예제 — <code>weatherboard</code></h2>
+    <p>전 단계를 관통하는 하나의 예제 서비스를 둔다. 날씨 API를 조회해 페이지를 그려주는 아주 작은
+    HTTP 서비스를 Stage 5에서 만들고, 이후 단계에서 계속 감싼다. 도구를 따로따로 배우는 대신
+    하나의 서비스가 자라는 과정으로 배우기 위한 장치다.</p>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>단계</th><th>weatherboard에 일어나는 일</th></tr></thead>
+        <tbody>
+          <tr><td><code>Stage 05</code></td><td>파이썬으로 서비스 자체를 작성</td></tr>
+          <tr><td><code>Stage 06</code></td><td>Nginx 리버스 프록시 뒤에 배치하고 TLS 적용</td></tr>
+          <tr><td><code>Stage 07</code></td><td>컨테이너 이미지로 패키징, Compose로 함께 실행</td></tr>
+          <tr><td><code>Stage 08</code></td><td>쿠버네티스에 Deployment/Service/Ingress로 배포</td></tr>
+          <tr><td><code>Stage 09</code></td><td>커밋하면 빌드·테스트·배포되는 파이프라인 연결</td></tr>
+          <tr><td><code>Stage 10</code></td><td>인프라를 Terraform으로 정의</td></tr>
+          <tr><td><code>Stage 11</code></td><td>Ansible로 서버 구성 관리</td></tr>
+          <tr><td><code>Stage 12</code></td><td>클라우드에 실제로 올리고 비용을 본다</td></tr>
+          <tr><td><code>Stage 13</code></td><td>메트릭·로그·대시보드·알럿 부착</td></tr>
+          <tr><td><code>Stage 14</code></td><td>시크릿 정리, 이미지 스캔, 보안 게이트 추가</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2 id="schedule">전체 일정</h2>
+    <p class="muted">주당 10시간(평일 1시간 + 주말 5시간) 기준. 시간은 목표가 아니라 견적이다.</p>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>주차</th><th>단계</th><th>시간</th><th>파트</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><code>W1–3</code></td>
+            <td><a href="stages/01-linux/index.html">Stage 01. Linux</a></td>
+            <td>24h</td>
+            <td class="muted">Part 1. 기반 다지기</td>
+          </tr>
+          <tr>
+            <td><code>W4–5</code></td>
+            <td><a href="stages/02-networking/index.html">Stage 02. Networking Fundamentals</a></td>
+            <td>16h</td>
+            <td class="muted">Part 1. 기반 다지기</td>
+          </tr>
+          <tr>
+            <td><code>W6–7</code></td>
+            <td><a href="stages/03-git-github/index.html">Stage 03. Git + GitHub</a></td>
+            <td>14h</td>
+            <td class="muted">Part 1. 기반 다지기</td>
+          </tr>
+          <tr>
+            <td><code>W8–9</code></td>
+            <td><a href="stages/04-bash/index.html">Stage 04. Shell Scripting (Bash)</a></td>
+            <td>16h</td>
+            <td class="muted">Part 2. 자동화의 언어</td>
+          </tr>
+          <tr>
+            <td><code>W10–11</code></td>
+            <td><a href="stages/05-python/index.html">Stage 05. Python (Basics)</a></td>
+            <td>20h</td>
+            <td class="muted">Part 2. 자동화의 언어</td>
+          </tr>
+          <tr>
+            <td><code>W12–13</code></td>
+            <td><a href="stages/06-web-servers/index.html">Stage 06. Web Servers (Nginx / Apache)</a></td>
+            <td>14h</td>
+            <td class="muted">Part 3. 서비스와 컨테이너</td>
+          </tr>
+          <tr>
+            <td><code>W14–15</code></td>
+            <td><a href="stages/07-docker/index.html">Stage 07. Docker</a></td>
+            <td>20h</td>
+            <td class="muted">Part 3. 서비스와 컨테이너</td>
+          </tr>
+          <tr>
+            <td><code>W16–18</code></td>
+            <td><a href="stages/08-kubernetes/index.html">Stage 08. Kubernetes</a></td>
+            <td>32h</td>
+            <td class="muted">Part 3. 서비스와 컨테이너</td>
+          </tr>
+          <tr>
+            <td><code>W19–20</code></td>
+            <td><a href="stages/09-cicd/index.html">Stage 09. CI/CD (GitHub Actions / Jenkins)</a></td>
+            <td>20h</td>
+            <td class="muted">Part 4. 배포와 인프라</td>
+          </tr>
+          <tr>
+            <td><code>W21–22</code></td>
+            <td><a href="stages/10-terraform/index.html">Stage 10. Infrastructure as Code (Terraform)</a></td>
+            <td>20h</td>
+            <td class="muted">Part 4. 배포와 인프라</td>
+          </tr>
+          <tr>
+            <td><code>W23–24</code></td>
+            <td><a href="stages/11-ansible/index.html">Stage 11. Configuration Management (Ansible)</a></td>
+            <td>14h</td>
+            <td class="muted">Part 4. 배포와 인프라</td>
+          </tr>
+          <tr>
+            <td><code>W25–27</code></td>
+            <td><a href="stages/12-cloud/index.html">Stage 12. Cloud Platforms (AWS / Azure / GCP)</a></td>
+            <td>28h</td>
+            <td class="muted">Part 4. 배포와 인프라</td>
+          </tr>
+          <tr>
+            <td><code>W28–29</code></td>
+            <td><a href="stages/13-observability/index.html">Stage 13. Monitoring &amp; Logging</a></td>
+            <td>20h</td>
+            <td class="muted">Part 5. 운영과 보안</td>
+          </tr>
+          <tr>
+            <td><code>W30–31</code></td>
+            <td><a href="stages/14-security/index.html">Stage 14. Security (DevSecOps Basics)</a></td>
+            <td>18h</td>
+            <td class="muted">Part 5. 운영과 보안</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2 id="skip">건너뛰기 지침</h2>
+    <div class="callout">
+      <p class="callout-title">건너뛰어도 되는 경우</p>
+      <p>이미 개발자라 Git과 Python을 쓴다면 Stage 3과 5는 체크리스트만 통과하고 넘어가도 된다.
+      목표가 특정 직무(예: 쿠버네티스 운영)라면 Stage 1·2·7·8·13을 먼저 하고 나머지를 나중에 해도 된다.</p>
+    </div>
+    <div class="callout warn">
+      <p class="callout-title">건너뛰면 안 되는 것</p>
+      <p>Stage 1(Linux)과 Stage 2(Networking). 이후 모든 장애 대응이 이 둘에서 갈린다.
+      도구는 바뀌어도 이 둘은 바뀌지 않는다.</p>
+    </div>
+
+    <h2 id="releases">사이트 집필 순서</h2>
+    <p>학습 순서와 같은 순서로 쓴다. 앞 단계의 산출물이 뒷 단계의 입력이라 건너뛰고 쓰면 예제가
+    어긋난다. 한 단계당 PR 하나가 원칙이다.</p>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>릴리스</th><th>범위</th><th>상태</th></tr></thead>
+        <tbody>
+          <tr><td><code>v0.1</code></td><td>사이트 뼈대 + 14단계 플레이스홀더</td><td><span class="badge done">완료</span></td></tr>
+          <tr><td><code>v0.2</code></td><td>Stage 1 본문</td><td><span class="badge done">완료</span></td></tr>
+          <tr><td><code>v0.3</code></td><td>Stage 2–3 (Part 1 완성)</td><td><span class="badge ">예정</span></td></tr>
+          <tr><td><code>v0.4</code></td><td>Stage 4–5 (Part 2 완성)</td><td><span class="badge ">예정</span></td></tr>
+          <tr><td><code>v0.5</code></td><td>Stage 6–8 (Part 3 완성)</td><td><span class="badge ">예정</span></td></tr>
+          <tr><td><code>v0.6</code></td><td>Stage 9–12 (Part 4 완성)</td><td><span class="badge ">예정</span></td></tr>
+          <tr><td><code>v1.0</code></td><td>Stage 13–14 (Part 5 완성)</td><td><span class="badge ">예정</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="muted">더 자세한 단계별 목표·산출물·완료 기준과 집필 규격은 저장소의
+    <a href="https://github.com/3r15/devops/blob/main/docs/LEARNING_PLAN.md">docs/LEARNING_PLAN.md</a>와
+    <a href="https://github.com/3r15/devops/blob/main/docs/CONTENT_GUIDE.md">docs/CONTENT_GUIDE.md</a>에 있다.</p>
+
+  </div>
+</main>
+
+<footer class="site-footer">
+  <div class="wrap">
+    <span>DevOps Learning Path — 14 stages, 5 parts</span>
+    <span>Built with GitHub Pages</span>
+  </div>
+</footer>
+
+<script src="assets/js/main.js"></script>
+</body>
+</html>

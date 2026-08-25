@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "allow": [
+      "Bash(python3 tools/scaffold.py:*)",
+      "Bash(python3 tools/check_links.py:*)",
+      "Bash(python3 -m http.server:*)",
+      "Read"
+    ]
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit|Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/verify-site.py\"",
+            "timeout": 30,
+            "statusMessage": "사이트 검증 중"
+          }
+        ]
+      }
+    ]
+  }
+}
