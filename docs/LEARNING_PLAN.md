@@ -203,7 +203,7 @@
 | v0.3 | Stage 2–3 (Part 1 완성) | ✅ 완료 |
 | v0.4 | Stage 4–5 (Part 2 완성) | ✅ 완료 |
 | v0.5 | Stage 6–8 (Part 3 완성) | ✅ 완료 |
-| v0.6 | Stage 9–12 (Part 4 완성) | 예정 |
+| v0.6 | Stage 9–12 (Part 4 완성) | 🚧 진행 중 (Stage 9 완료) |
 | v1.0 | Stage 13–14 (Part 5 완성) | 예정 |
 
 ### 단계 페이지 표준 구조
