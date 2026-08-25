@@ -15,11 +15,13 @@
 | Part 4 — 배포와 인프라 | CI/CD · Terraform · Ansible · Cloud | 9–12 |
 | Part 5 — 운영과 보안 | Monitoring/Logging · Security | 13–14 |
 
-전체 계획은 [`docs/LEARNING_PLAN.md`](docs/LEARNING_PLAN.md)에 있습니다.
+전체 계획은 [`docs/LEARNING_PLAN.md`](docs/LEARNING_PLAN.md), 집필 규격은
+[`docs/CONTENT_GUIDE.md`](docs/CONTENT_GUIDE.md)에 있습니다.
 
 ## 저장소 구조
 
 ```
+CLAUDE.md                Claude Code용 저장소 안내
 data/curriculum.json     커리큘럼 단일 진실 공급원 (파트/단계/시간/상태)
 site/                    배포되는 정적 사이트
   index.html             메인 — 파트 카드 + 전체 단계 목록   [생성됨]
@@ -29,6 +31,7 @@ site/                    배포되는 정적 사이트
 tools/scaffold.py        curriculum.json → 메인/파트 페이지 생성, 단계 스텁 생성
 tools/check_links.py     사이트 내부 링크 검사
 docs/                    학습 계획 및 집필 가이드
+.claude/                 집필 자동화 (스킬 / 서브에이전트 / 검증 훅)
 ```
 
 `[생성됨]` 페이지는 매번 다시 만들어집니다. 직접 고치지 말고 `data/curriculum.json`을 고친 뒤
@@ -52,3 +55,17 @@ python3 tools/scaffold.py --check   # CI와 동일한 동기화 검사
 
 두 검사는 PR과 `main` push마다 CI에서도 돌고, `main`에 올라간 `site/`는
 `.github/workflows/pages.yml`이 GitHub Pages로 배포합니다.
+
+## 집필 자동화
+
+`.claude/`에 이 저장소 전용 설정이 들어 있습니다.
+
+| 종류 | 이름 | 하는 일 |
+| --- | --- | --- |
+| 스킬 | `/new-stage` | 단계 하나를 스캐폴딩 → 집필 → 상태 갱신 → 검증 → PR까지의 절차 |
+| 서브에이전트 | `stage-author` | 집필 가이드에 맞춰 단계 본문 한 개를 작성 |
+| 서브에이전트 | `stage-reviewer` | 머지 전 기술적 정확성 검수 (명령어를 실제로 검증) |
+| 훅 | `PostToolUse` | `site/`·`data/`·`tools/`를 건드린 편집 직후 CI와 같은 두 검사를 자동 실행 |
+
+훅은 검사가 실패하면 편집을 되돌리지 않고 실패 내용을 즉시 알려, 깨진 링크나 데이터와
+어긋난 생성 페이지가 커밋에 섞이는 것을 막습니다.
