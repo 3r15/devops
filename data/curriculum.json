@@ -49,7 +49,7 @@
     }
   ],
   "stages": [
-    { "n": 1,  "slug": "linux",         "title": "Linux",                          "titleKo": "리눅스",              "part": "foundations", "hours": 24, "status": "planned",    "summary": "파일시스템, 권한, 프로세스, 패키지, systemd — 서버 위에서 손이 자유로워지는 단계." },
+    { "n": 1,  "slug": "linux",         "title": "Linux",                          "titleKo": "리눅스",              "part": "foundations", "hours": 24, "status": "done",    "summary": "파일시스템, 권한, 프로세스, 패키지, systemd — 서버 위에서 손이 자유로워지는 단계." },
     { "n": 2,  "slug": "networking",    "title": "Networking Fundamentals",        "titleKo": "네트워크 기초",        "part": "foundations", "hours": 16, "status": "planned", "summary": "OSI/TCP-IP, IP·서브넷, DNS, HTTP, 방화벽. 장애의 절반은 네트워크에서 시작됩니다." },
     { "n": 3,  "slug": "git-github",    "title": "Git + GitHub",                   "titleKo": "깃과 깃허브",          "part": "foundations", "hours": 14, "status": "planned", "summary": "브랜치 전략, 리베이스/머지, PR 리뷰, 태그와 릴리스." },
     { "n": 4,  "slug": "bash",          "title": "Shell Scripting (Bash)",         "titleKo": "셸 스크립팅",          "part": "automation",  "hours": 16, "status": "planned", "summary": "파이프라인, 조건/반복, 함수, set -euo pipefail, 실전 운영 스크립트." },

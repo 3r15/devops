@@ -32,14 +32,495 @@
       <p class="lead">파일시스템, 권한, 프로세스, 패키지, systemd — 서버 위에서 손이 자유로워지는 단계.</p>
       <div class="hero-meta">
         <span>예상 <b>24</b>시간</span>
-        <span><span class="badge">예정</span></span>
+        <span><span class="badge done">완료</span></span>
       </div>
     </section>
 
-    <div class="placeholder">
-      <h2>아직 작성 중입니다</h2>
-      <p>이 단계의 본문은 준비 중입니다. 학습 계획에 따라 순서대로 채워집니다.</p>
-      <p><a href="../../plan.html">전체 학습 계획 보기 →</a></p>
+    <h2 id="goals">이 단계를 끝내면</h2>
+    <ul>
+      <li>낯선 서버에 접속해 지금 무슨 일이 일어나고 있는지 5분 안에 파악할 수 있다.</li>
+      <li>파일을 왜 못 읽는지, 왜 못 쓰는지를 권한으로 설명하고 고칠 수 있다.</li>
+      <li>죽은 서비스를 되살리고, 왜 죽었는지 로그에서 근거를 찾을 수 있다.</li>
+      <li>디스크가 찬 원인을 찾아 안전하게 정리할 수 있다.</li>
+      <li>모르는 명령을 <code>man</code>과 <code>--help</code>만으로 스스로 익힐 수 있다.</li>
+    </ul>
+
+    <h2 id="prereq">준비물</h2>
+    <ul>
+      <li>리눅스 환경 하나. VM(VirtualBox, UTM), WSL2, 클라우드 프리티어 인스턴스 중 아무거나.</li>
+      <li><code>sudo</code>를 쓸 수 있는 계정.</li>
+      <li>터미널. 그게 전부다.</li>
+    </ul>
+    <div class="callout">
+      <p class="callout-title">💡 배포판 이야기</p>
+      <p>이 페이지의 예제는 Ubuntu 22.04 / Debian 12 기준이다. RHEL 계열(Rocky, AlmaLinux)은
+      패키지 관리 명령이 다르고, 그 차이는 <a href="#pkg">패키지 관리</a> 절에 표로 정리해 두었다.
+      나머지 90%는 배포판을 가리지 않는다.</p>
+    </div>
+
+    <nav class="toc">
+      <p>목차</p>
+      <ol>
+        <li><a href="#fs">파일시스템 — 지도부터</a></li>
+        <li><a href="#text">텍스트를 다루는 도구</a></li>
+        <li><a href="#perm">권한과 소유권</a></li>
+        <li><a href="#proc">프로세스와 시그널</a></li>
+        <li><a href="#pkg">패키지 관리</a></li>
+        <li><a href="#systemd">서비스와 systemd</a></li>
+        <li><a href="#logs">로그 읽기</a></li>
+        <li><a href="#resources">디스크와 메모리</a></li>
+        <li><a href="#ssh">원격 접속(SSH)</a></li>
+      </ol>
+    </nav>
+
+    <h2 id="fs">1. 파일시스템 — 지도부터</h2>
+    <p>리눅스에는 드라이브 문자가 없다. 모든 것이 <code>/</code>(루트) 하나에서 뻗어 나온
+    한 그루의 나무다. 디스크를 하나 더 붙여도 <code>D:</code>가 생기지 않고
+    <code>/mnt/data</code> 같은 디렉터리에 얹힌다(마운트).</p>
+    <p>운영에서 실제로 자주 들어가는 곳은 몇 군데뿐이다.</p>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>경로</th><th>무엇이 있나</th><th>언제 열게 되나</th></tr></thead>
+        <tbody>
+          <tr><td><code>/etc</code></td><td>시스템 설정 파일</td><td>서비스 설정을 고칠 때</td></tr>
+          <tr><td><code>/var/log</code></td><td>로그</td><td>장애의 대부분은 여기서 시작한다</td></tr>
+          <tr><td><code>/var/lib</code></td><td>서비스가 쓰는 데이터(DB 파일 등)</td><td>디스크가 찼을 때</td></tr>
+          <tr><td><code>/home/&lt;user&gt;</code></td><td>사용자 홈. <code>~</code>로 줄여 쓴다</td><td>늘</td></tr>
+          <tr><td><code>/usr/bin</code>, <code>/bin</code></td><td>설치된 명령어 실행 파일</td><td>명령을 못 찾을 때</td></tr>
+          <tr><td><code>/opt</code></td><td>배포판 패키지 밖에서 설치한 소프트웨어</td><td>수동 설치한 것을 찾을 때</td></tr>
+          <tr><td><code>/tmp</code></td><td>임시 파일. 재부팅하면 사라질 수 있다</td><td>중요한 것을 두면 안 되는 곳</td></tr>
+          <tr><td><code>/proc</code></td><td>커널이 만드는 가짜 파일들(프로세스 정보)</td><td>디스크를 차지하지 않는다</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>돌아다니기</h3>
+    <pre><code>pwd                 # 지금 어디인가
+ls -lah /etc        # 자세히(-l), 숨김 포함(-a), 사람이 읽는 크기(-h)
+cd /var/log
+cd -                # 직전 위치로 되돌아가기
+cd                  # 인자 없이 치면 홈(~)</code></pre>
+    <p>경로에는 두 가지가 있다. <code>/</code>로 시작하면 절대 경로(어디서 치든 같은 곳),
+    아니면 현재 위치 기준의 상대 경로다. <code>.</code>은 현재 디렉터리,
+    <code>..</code>은 한 단계 위다.</p>
+
+    <h3>찾기</h3>
+    <pre><code>find /etc -name "*.conf"              # 이름으로
+find /var/log -type f -size +100M    # 100MB보다 큰 파일
+find /home -mtime -1                 # 최근 하루 안에 수정된 것
+
+which nginx                          # 이 명령의 실행 파일은 어디에 있나
+type cd                              # 셸 내장 명령인가 실행 파일인가</code></pre>
+    <div class="callout">
+      <p class="callout-title">💡 모르는 명령을 만났을 때</p>
+      <p><code>man find</code>로 매뉴얼을 열고 <code>/</code>를 눌러 검색, <code>q</code>로 나온다.
+      매뉴얼이 길어서 버겁다면 <code>find --help</code>가 요약본이다. 이 두 개를 쓰는 습관이
+      이 단계에서 얻어갈 가장 오래 쓰는 기술이다.</p>
+    </div>
+
+    <h2 id="text">2. 텍스트를 다루는 도구</h2>
+    <p>유닉스의 설계 철학은 "작은 도구를 파이프로 잇는다"이다. 파이프 <code>|</code>는 왼쪽 명령의
+    출력을 오른쪽 명령의 입력으로 넘긴다. 이 하나를 익히면 나머지는 조합이다.</p>
+
+    <h3>보기</h3>
+    <pre><code>cat /etc/hostname          # 짧은 파일 통째로
+less /var/log/syslog       # 긴 파일을 스크롤하며 (q로 종료, /로 검색)
+head -n 20 access.log      # 앞 20줄
+tail -n 50 access.log      # 뒤 50줄
+tail -f /var/log/syslog    # 새로 쌓이는 줄을 실시간으로 (Ctrl+C로 종료)</code></pre>
+
+    <h3>거르기와 세기</h3>
+    <pre><code>grep "error" /var/log/syslog             # 이 단어가 든 줄만
+grep -i "error" /var/log/syslog          # 대소문자 무시
+grep -c "error" /var/log/syslog          # 몇 줄인지만
+grep -rn "listen" /etc/nginx/            # 디렉터리 전체를 줄번호와 함께
+
+# 조합: 오늘 로그에서 error를 뽑아 개수 세기
+grep "error" /var/log/syslog | wc -l</code></pre>
+
+    <h3>자르고 세우고 묶기</h3>
+    <pre><code># 접속이 많은 IP 상위 10개 — 파이프라인의 전형적인 모양
+awk '{print $1}' access.log | sort | uniq -c | sort -rn | head -10
+#   IP만 뽑고    → 정렬  → 중복을 세고 → 많은 순  → 위 10줄
+
+cut -d: -f1 /etc/passwd    # : 로 나눠 첫 번째 칸(사용자 이름)만</code></pre>
+
+    <h3>바꾸기</h3>
+    <pre><code>sed 's/8080/9090/' app.conf         # 화면에만 바꿔 출력 (파일은 그대로)
+sed -i.bak 's/8080/9090/' app.conf # 파일을 직접 수정, app.conf.bak으로 백업</code></pre>
+    <div class="callout warn">
+      <p class="callout-title">⚠ sed -i 는 되돌릴 수 없다</p>
+      <p><code>-i</code>는 파일을 그 자리에서 덮어쓴다. 확장자를 붙인 <code>-i.bak</code> 형태로
+      백업을 남기는 습관을 들이자. 설정 파일을 바꿀 때는 먼저 <code>-i</code> 없이 실행해
+      결과를 눈으로 확인하는 것이 안전하다.</p>
+    </div>
+
+    <h3>출력 방향 바꾸기</h3>
+    <pre><code>ls -l &gt; files.txt          # 덮어쓰기
+ls -l &gt;&gt; files.txt         # 이어붙이기
+command 2&gt; errors.txt      # 에러(stderr)만 따로
+command &gt; out.txt 2&gt;&amp;1     # 출력과 에러를 한곳에</code></pre>
+    <p>프로그램은 보통 두 갈래로 말한다. 정상 출력(stdout, 1번)과 에러(stderr, 2번)다.
+    파이프 <code>|</code>는 기본적으로 1번만 넘긴다. 에러가 파이프를 타지 않는다면 이것이 이유다.</p>
+
+    <h2 id="perm">3. 권한과 소유권</h2>
+    <p><code>ls -l</code>의 첫 열이 권한이다. 이걸 읽을 줄 알면 "왜 안 되지"의 절반이 풀린다.</p>
+    <pre><code>ls -l /etc/shadow
+# -rw-r----- 1 root shadow 1.4K Aug 25 09:12 /etc/shadow
+#  ^^^ ^^^ ^^^   ^     ^
+#   |   |   |    |     └ 그룹
+#   |   |   |    └ 소유자
+#   |   |   └ 나머지 모든 사용자(others): 아무 권한 없음
+#   |   └ 그룹(shadow): 읽기만
+#   └ 소유자(root): 읽기+쓰기</code></pre>
+    <p>맨 앞 한 글자는 종류다. <code>-</code>는 일반 파일, <code>d</code>는 디렉터리,
+    <code>l</code>은 심볼릭 링크다.</p>
+
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>기호</th><th>숫자</th><th>파일에서</th><th>디렉터리에서</th></tr></thead>
+        <tbody>
+          <tr><td><code>r</code></td><td>4</td><td>내용을 읽는다</td><td>목록을 본다(<code>ls</code>)</td></tr>
+          <tr><td><code>w</code></td><td>2</td><td>내용을 고친다</td><td>안에 파일을 만들거나 지운다</td></tr>
+          <tr><td><code>x</code></td><td>1</td><td>실행한다</td><td>안으로 들어간다(<code>cd</code>)</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>디렉터리의 <code>x</code>가 헷갈리는 지점이다. <code>r</code>만 있고 <code>x</code>가 없으면
+    파일 이름은 보이는데 그 안으로 들어가지도, 내용을 읽지도 못한다.</p>
+
+    <h3>바꾸기</h3>
+    <pre><code>chmod 640 secrets.env      # 소유자 rw-, 그룹 r--, 나머지 ---
+chmod +x deploy.sh         # 실행 권한 추가
+chmod -R 755 /var/www      # 디렉터리 아래 전부 (-R은 재귀)
+
+chown deploy:deploy app.log       # 소유자와 그룹을 함께
+chown -R deploy /var/www/app</code></pre>
+    <p>숫자는 <code>r=4, w=2, x=1</code>을 더한 것이다. <code>640</code>은 소유자 <code>4+2=6</code>,
+    그룹 <code>4</code>, 나머지 <code>0</code>이라는 뜻이다. 자주 쓰는 조합은
+    <code>644</code>(일반 파일), <code>755</code>(실행 파일과 디렉터리),
+    <code>600</code>(비밀 파일) 정도다.</p>
+
+    <div class="callout warn">
+      <p class="callout-title">⚠ chmod 777 은 해결책이 아니다</p>
+      <p>권한 문제를 만나면 <code>777</code>(모두에게 모든 권한)로 뚫고 싶어진다. 그러면 그 서버의
+      아무 프로세스나 그 파일을 고칠 수 있게 된다. 설정 파일이나 키 파일에 이걸 하면 그 순간
+      보안이 사라진다. 대신 <b>누가 이 파일에 접근해야 하는지</b>를 정하고 소유자나 그룹을 맞춰라.</p>
+    </div>
+
+    <h3>sudo</h3>
+    <pre><code>sudo systemctl restart nginx   # 이 명령만 관리자 권한으로
+sudo -u deploy whoami          # 특정 사용자로 실행
+sudo -i                        # 관리자 셸로 진입 (오래 머물지 말 것)</code></pre>
+    <p><code>sudo</code>는 필요한 명령 하나에만 붙인다. 습관적으로 <code>sudo -i</code>로 들어가
+    작업하면, 실수 하나가 시스템 전체에 닿는다.</p>
+
+    <h2 id="proc">4. 프로세스와 시그널</h2>
+    <p>실행 중인 프로그램 하나가 프로세스다. 각각 번호(PID)를 갖는다.</p>
+    <pre><code>ps aux                       # 지금 도는 모든 프로세스
+ps aux | grep nginx          # 그중 nginx만
+pgrep -a nginx               # 같은 일을 더 깔끔하게
+
+top                          # 실시간 (q로 종료)
+top -o %MEM                  # 메모리 많이 쓰는 순으로</code></pre>
+    <p><code>ps aux</code>의 열 중 실제로 보는 것은 몇 개다. <code>PID</code>(번호),
+    <code>%CPU</code>, <code>%MEM</code>, <code>STAT</code>(상태), 그리고 마지막의
+    <code>COMMAND</code>(무엇을 어떤 인자로 실행했는지)다.</p>
+
+    <h3>멈추기</h3>
+    <pre><code>kill 1234              # 정중히 종료 요청 (SIGTERM). 기본값
+kill -HUP 1234         # 설정을 다시 읽어라 (많은 데몬이 지원)
+kill -9 1234           # 강제 종료 (SIGKILL). 마지막 수단
+pkill -f "python app.py"   # 명령줄로 찾아서</code></pre>
+    <div class="callout warn">
+      <p class="callout-title">⚠ -9 를 먼저 쓰지 않는다</p>
+      <p><code>SIGTERM</code>(기본)은 "정리하고 끝내라"이고, 프로그램은 이때 열린 파일을 닫고
+      쓰던 데이터를 저장한다. <code>-9</code>는 그 기회를 주지 않고 즉시 죽인다. 데이터베이스나
+      쓰기 중인 프로세스에 <code>-9</code>를 쓰면 손상된 파일이 남을 수 있다. 먼저
+      <code>kill</code>, 몇 초 기다려도 안 죽으면 그때 <code>-9</code>다.</p>
+    </div>
+
+    <h3>배경으로 돌리기</h3>
+    <pre><code>./long-job.sh &amp;            # 배경 실행
+jobs                       # 이 셸의 배경 작업 목록
+fg %1                      # 앞으로 가져오기
+Ctrl+Z                     # 실행 중인 것을 일시 정지 → bg 로 배경 전환
+
+nohup ./long-job.sh &amp;      # 로그아웃해도 계속 (출력은 nohup.out으로)</code></pre>
+    <p>다만 실제 서비스를 이렇게 띄우지는 않는다. 그건 <a href="#systemd">systemd</a>의 일이다.</p>
+
+    <h2 id="pkg">5. 패키지 관리</h2>
+    <p>소프트웨어를 소스에서 빌드하지 않고 배포판 저장소에서 받아 설치한다.</p>
+    <pre><code>sudo apt update                  # 저장소 목록 갱신 (설치 전 항상)
+sudo apt install nginx           # 설치
+apt search nginx                 # 검색
+apt show nginx                   # 버전, 의존성, 설명
+sudo apt remove nginx            # 제거 (설정 파일은 남김)
+sudo apt purge nginx             # 설정까지 제거
+sudo apt upgrade                 # 설치된 것 전체 업그레이드
+
+dpkg -l | grep nginx             # 설치된 패키지 목록에서 찾기
+dpkg -L nginx                    # 이 패키지가 어떤 파일을 깔았나</code></pre>
+    <div class="callout">
+      <p class="callout-title">💡 apt update 와 apt upgrade 는 다르다</p>
+      <p><code>update</code>는 "저장소에 무엇이 있는지 목록만 새로 받는다"이고,
+      <code>upgrade</code>가 실제로 패키지를 올린다. <code>update</code> 없이 <code>install</code>하면
+      오래된 목록을 보고 없는 버전을 받으려다 실패하는 경우가 있다.</p>
+    </div>
+
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>하는 일</th><th>Debian/Ubuntu</th><th>RHEL/Rocky/Alma</th></tr></thead>
+        <tbody>
+          <tr><td>목록 갱신</td><td><code>apt update</code></td><td><code>dnf check-update</code></td></tr>
+          <tr><td>설치</td><td><code>apt install X</code></td><td><code>dnf install X</code></td></tr>
+          <tr><td>제거</td><td><code>apt remove X</code></td><td><code>dnf remove X</code></td></tr>
+          <tr><td>검색</td><td><code>apt search X</code></td><td><code>dnf search X</code></td></tr>
+          <tr><td>어느 패키지의 파일인가</td><td><code>dpkg -S /path</code></td><td><code>rpm -qf /path</code></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2 id="systemd">6. 서비스와 systemd</h2>
+    <p>서버에서 계속 떠 있어야 하는 프로그램(웹 서버, DB, 에이전트)은 systemd가 관리한다.
+    부팅 시 자동 시작, 죽으면 재시작, 로그 수집이 전부 여기에 묶여 있다.</p>
+    <pre><code>systemctl status nginx        # 지금 상태 — 가장 많이 치게 될 명령
+sudo systemctl start nginx
+sudo systemctl stop nginx
+sudo systemctl restart nginx  # 껐다 켜기
+sudo systemctl reload nginx   # 무중단으로 설정만 다시 읽기 (지원하는 경우)
+
+sudo systemctl enable nginx   # 부팅 시 자동 시작 켜기
+sudo systemctl disable nginx
+systemctl is-enabled nginx
+
+systemctl list-units --type=service --state=running   # 지금 도는 서비스 전부
+systemctl --failed                                    # 실패한 것만</code></pre>
+
+    <p><code>systemctl status</code>의 출력에서 볼 곳은 세 군데다.</p>
+    <pre><code>systemctl status nginx
+# ● nginx.service - A high performance web server
+#      Loaded: loaded (/lib/systemd/system/nginx.service; enabled; ...)
+#      Active: active (running) since Mon 2026-08-25 09:12:03 UTC; 2h ago
+#    Main PID: 1234 (nginx)
+#
+# Aug 25 09:12:03 web01 systemd[1]: Started A high performance web server.</code></pre>
+    <ul>
+      <li><b>Loaded</b> 끝의 <code>enabled</code>/<code>disabled</code> — 부팅 시 자동 시작 여부.</li>
+      <li><b>Active</b> — <code>active (running)</code>이면 정상, <code>failed</code>면 죽은 것,
+      <code>inactive (dead)</code>면 그냥 꺼져 있는 것.</li>
+      <li>맨 아래 몇 줄 — 최근 로그. 여기서 원인이 바로 보이는 경우가 많다.</li>
+    </ul>
+
+    <h3>유닛 파일</h3>
+    <p>서비스의 정의는 <code>/etc/systemd/system/</code>(직접 만든 것)이나
+    <code>/lib/systemd/system/</code>(패키지가 설치한 것)에 있다.</p>
+    <pre><code>systemctl cat nginx           # 이 서비스의 유닛 파일 내용 보기
+sudo systemctl edit nginx     # 원본을 건드리지 않고 덮어쓰기 조각 추가
+
+sudo systemctl daemon-reload  # 유닛 파일을 고쳤다면 반드시</code></pre>
+    <div class="callout warn">
+      <p class="callout-title">⚠ 유닛 파일을 고치고 daemon-reload 를 빼먹는 실수</p>
+      <p>systemd는 유닛 파일을 메모리에 올려 두고 쓴다. 파일만 고치고
+      <code>systemctl restart</code>를 하면 <b>고치기 전 내용으로</b> 재시작된다.
+      "분명히 고쳤는데 안 먹는다"의 대부분이 이것이다. 순서는 항상
+      편집 → <code>daemon-reload</code> → <code>restart</code>다.</p>
+    </div>
+
+    <h2 id="logs">7. 로그 읽기</h2>
+    <p>로그는 두 곳에 있다. systemd가 모으는 저널과, 프로그램이 직접 쓰는
+    <code>/var/log</code> 아래의 파일이다.</p>
+    <pre><code>journalctl -u nginx                    # 이 서비스의 로그만
+journalctl -u nginx -f                 # 실시간으로 따라가기
+journalctl -u nginx --since "10 min ago"
+journalctl -u nginx --since today -p err   # 에러 이상만
+journalctl -b                          # 이번 부팅 이후 전체
+journalctl -b -1                        # 직전 부팅 (갑자기 재부팅됐을 때)
+
+tail -f /var/log/nginx/error.log       # 파일로 쓰는 로그는 이렇게</code></pre>
+    <p><code>-p</code>는 심각도다. <code>err</code>, <code>warning</code>, <code>info</code> 순으로
+    범위가 넓어진다. 장애를 볼 때는 <code>-p err</code>로 좁혔다가 필요하면 넓히는 편이 빠르다.</p>
+    <div class="callout">
+      <p class="callout-title">💡 로그가 통째로 사라졌다면</p>
+      <p><code>logrotate</code>가 오래된 로그를 압축하고 지운다. <code>/var/log</code>에
+      <code>syslog.1</code>, <code>syslog.2.gz</code>처럼 번호가 붙은 파일이 그것이다.
+      압축된 것은 <code>zgrep</code>으로 바로 검색할 수 있다.</p>
+    </div>
+
+    <h2 id="resources">8. 디스크와 메모리</h2>
+    <pre><code>df -h                  # 파일시스템별 사용량
+df -i                  # inode 사용량 (아래 설명)
+du -sh /var/log        # 이 디렉터리가 차지하는 총량
+du -h --max-depth=1 /var | sort -h    # 어느 하위 디렉터리가 큰지 한 눈에
+
+free -h                # 메모리
+uptime                 # 가동 시간과 부하(load average)</code></pre>
+
+    <h3>디스크가 찼을 때의 순서</h3>
+    <pre><code>df -h                                  # 1. 어느 파일시스템이 찼나
+du -h --max-depth=1 / | sort -h        # 2. 루트부터 큰 디렉터리를 따라 내려간다
+du -h --max-depth=1 /var | sort -h     # 3. 범인이 나올 때까지 반복
+find /var/log -type f -size +100M      # 4. 큰 파일 직접 찾기</code></pre>
+    <p><code>free -h</code>에서 <code>available</code>이 실제로 쓸 수 있는 메모리다.
+    <code>free</code> 열이 작다고 놀랄 필요 없다. 리눅스는 남는 메모리를 디스크 캐시로 쓰고,
+    필요하면 즉시 내준다.</p>
+
+    <h2 id="ssh">9. 원격 접속(SSH)</h2>
+    <pre><code>ssh deploy@203.0.113.10
+ssh -p 2222 deploy@example.com     # 포트가 다를 때
+ssh -i ~/.ssh/id_ed25519 deploy@example.com   # 키를 지정해서</code></pre>
+
+    <h3>비밀번호 대신 키로</h3>
+    <pre><code>ssh-keygen -t ed25519 -C "내-노트북"     # 키 쌍 생성 (한 번만)
+ssh-copy-id deploy@example.com           # 공개키를 서버에 등록
+ssh deploy@example.com                   # 이제 비밀번호를 묻지 않는다</code></pre>
+    <p>키는 두 짝이다. <code>~/.ssh/id_ed25519</code>가 개인키(절대 남에게 주지 않는다),
+    <code>~/.ssh/id_ed25519.pub</code>가 공개키(서버에 등록하는 쪽)다. 서버에서는
+    <code>~/.ssh/authorized_keys</code>에 공개키가 쌓인다.</p>
+
+    <h3>접속 정보를 이름으로 저장하기</h3>
+    <pre><code>cat &gt;&gt; ~/.ssh/config &lt;&lt;'EOF'
+Host web01
+  HostName 203.0.113.10
+  User deploy
+  Port 2222
+  IdentityFile ~/.ssh/id_ed25519
+EOF
+
+ssh web01     # 이제 이걸로 끝</code></pre>
+
+    <h3>파일 주고받기</h3>
+    <pre><code>scp app.tar.gz web01:/tmp/            # 올리기
+scp web01:/var/log/app.log ./        # 내려받기
+rsync -avz ./dist/ web01:/var/www/   # 큰 디렉터리는 rsync가 낫다 (변경분만)</code></pre>
+
+    <h2 id="pitfalls">자주 하는 실수</h2>
+
+    <h3>Permission denied (publickey)</h3>
+    <pre><code>ssh deploy@example.com
+# deploy@example.com: Permission denied (publickey).</code></pre>
+    <p>서버가 비밀번호 인증을 끄고 공개키만 받는 상태인데, 내 키가 등록돼 있지 않거나 서버가
+    그 키를 찾지 못한 것이다. <code>ssh -v</code>로 어떤 키를 시도했는지 확인하고,
+    <code>ssh-copy-id</code>로 등록한다. 등록했는데도 거부된다면 서버 쪽
+    <code>~/.ssh</code>의 권한을 본다. <code>~/.ssh</code>는 <code>700</code>,
+    <code>authorized_keys</code>는 <code>600</code>이어야 하며, 더 열려 있으면
+    SSH가 <b>의도적으로</b> 무시한다.</p>
+
+    <h3>sudo 를 붙였더니 command not found</h3>
+    <pre><code>terraform version
+# Terraform v1.9.5
+sudo terraform version
+# sudo: terraform: command not found</code></pre>
+    <p><code>sudo</code>는 보안을 위해 <code>PATH</code>를 초기화한다. 내 계정의
+    <code>PATH</code>에만 있는 명령(예: <code>/usr/local/bin</code>이나 홈 디렉터리 아래)은
+    보이지 않는다. 절대 경로로 부르거나(<code>sudo /usr/local/bin/terraform</code>),
+    애초에 <code>sudo</code>가 필요한 명령인지 다시 생각해 본다.</p>
+
+    <h3>No space left on device — 그런데 df 는 여유가 있다고 한다</h3>
+    <pre><code>touch /var/log/test
+# touch: cannot touch '/var/log/test': No space left on device
+df -h /var
+# /dev/sda1  40G  22G  17G  57% /var</code></pre>
+    <p>두 가지 중 하나다.</p>
+    <ol>
+      <li><b>inode 고갈.</b> 용량은 남았지만 파일 개수 한도가 찼다. <code>df -i</code>로 확인한다.
+      작은 파일을 수백만 개 만드는 서비스에서 생긴다.</li>
+      <li><b>지워졌지만 열려 있는 파일.</b> 로그 파일을 <code>rm</code>했는데 프로세스가 아직 그 파일을
+      열고 있으면 공간이 반환되지 않는다. <code>lsof +L1</code>로 찾고, 해당 서비스를
+      재시작하거나 <code>HUP</code>을 보내면 공간이 돌아온다.</li>
+    </ol>
+    <p>그래서 로그를 지울 때는 <code>rm</code> 대신 비우는 편이 안전하다.</p>
+    <pre><code>truncate -s 0 /var/log/huge.log     # 파일은 두고 내용만 비운다</code></pre>
+
+    <h3>설정을 고쳤는데 반영되지 않는다</h3>
+    <p>순서대로 확인한다. (1) 고친 파일이 정말 그 서비스가 읽는 파일인가 —
+    <code>systemctl cat &lt;서비스&gt;</code>로 유닛이 가리키는 경로를 확인한다.
+    (2) 유닛 파일을 고쳤다면 <code>daemon-reload</code>를 했는가.
+    (3) <code>restart</code>가 아니라 <code>reload</code>만 해서 반영이 안 되는 종류의 변경은 아닌가.
+    (4) 문법 오류로 서비스가 예전 설정으로 남아 있는 것은 아닌가 —
+    <code>journalctl -u &lt;서비스&gt; -p err</code>를 본다.</p>
+
+    <h3>rm -rf 로 엉뚱한 것을 지웠다</h3>
+    <p>리눅스에 휴지통은 없다. 특히 변수를 쓴 명령이 위험하다.
+    <code>rm -rf "$DIR"/</code>에서 <code>DIR</code>이 비어 있으면 <code>rm -rf /</code>가 된다.
+    습관을 두 개만 들이자. 지우기 전에 같은 경로로 <code>ls</code>를 먼저 쳐 보는 것,
+    그리고 스크립트에서는 <code>rm</code> 앞에 경로가 비었는지 검사하는 것이다.
+    (스크립트에서의 방어는 Stage 4에서 <code>set -euo pipefail</code>과 함께 다룬다.)</p>
+
+    <h2 id="exercises">직접 해보기</h2>
+
+    <h3>과제 1 — 서버 상태 요약 스크립트</h3>
+    <p>실행하면 아래를 한 화면에 보여주는 <code>sysreport.sh</code>를 만든다. 지금은 명령을
+    나열하는 수준으로 충분하다. Stage 4에서 인자 처리와 에러 처리를 붙여 완성한다.</p>
+    <ul>
+      <li>호스트명, 가동 시간, 부하</li>
+      <li>디스크 사용량 상위 3개 파일시스템</li>
+      <li>메모리 사용량</li>
+      <li>CPU를 많이 쓰는 프로세스 5개</li>
+      <li>실패한 systemd 서비스 목록</li>
+    </ul>
+    <p><b>검증:</b> <code>bash sysreport.sh</code>가 위 다섯 항목을 모두 출력하고, 종료 코드가
+    <code>0</code>인가(<code>echo $?</code>).</p>
+
+    <h3>과제 2 — 서비스를 죽였다가 되살리기</h3>
+    <p>Nginx를 설치하고, 프로세스를 강제로 죽인 뒤, 로그만 보고 무슨 일이 있었는지 설명한 다음
+    되살린다.</p>
+    <pre><code>sudo apt update &amp;&amp; sudo apt install -y nginx
+systemctl status nginx
+sudo kill -9 $(systemctl show -p MainPID --value nginx)
+systemctl status nginx
+journalctl -u nginx --since "5 min ago"</code></pre>
+    <p><b>검증:</b> <code>systemctl status nginx</code>가 다시 <code>active (running)</code>이고,
+    저널에서 프로세스가 비정상 종료된 시점을 짚을 수 있는가.</p>
+
+    <h3>과제 3 — 디스크를 채우고 범인 찾기</h3>
+    <pre><code>mkdir -p ~/lab &amp;&amp; fallocate -l 500M ~/lab/big.bin</code></pre>
+    <p><code>du</code>만 써서 홈 디렉터리 아래에서 이 파일을 찾아낸다. 위에서부터 좁혀 내려가는
+    순서를 몸에 익히는 것이 목적이다. 다 했으면 지운다.</p>
+    <p><b>검증:</b> <code>du -h --max-depth=1</code>을 두세 번 반복해 경로를 특정했는가.
+    <code>find</code>로 한 번에 찾지 않았는가.</p>
+
+    <h3>과제 4 — 비밀번호 없이 접속하기</h3>
+    <p>키 쌍을 만들고 서버에 등록한 뒤, <code>~/.ssh/config</code>에 별칭을 넣어
+    <code>ssh &lt;별칭&gt;</code>만으로 들어간다.</p>
+    <p><b>검증:</b> 비밀번호를 묻지 않고 접속되는가. <code>ls -ld ~/.ssh</code>가
+    <code>drwx------</code>인가.</p>
+
+    <h2 id="checklist">체크리스트</h2>
+    <p class="muted">브라우저에 저장된다. 끝낸 항목을 표시하며 진행하자.</p>
+    <div class="progress-bar" data-progress-for="stage-01"><i></i></div>
+    <p class="muted"><small data-progress-label></small></p>
+    <ul class="checklist" data-progress="stage-01">
+      <li><input type="checkbox" id="s01-c1"><label for="s01-c1"><code>/etc</code>, <code>/var/log</code>, <code>/usr/bin</code>에 각각 무엇이 있는지 보지 않고 말할 수 있다</label></li>
+      <li><input type="checkbox" id="s01-c2"><label for="s01-c2">파이프 세 개 이상을 이어 로그에서 원하는 통계를 뽑아 봤다</label></li>
+      <li><input type="checkbox" id="s01-c3"><label for="s01-c3"><code>ls -l</code>의 <code>-rw-r-----</code>를 보고 누가 무엇을 할 수 있는지 설명했다</label></li>
+      <li><input type="checkbox" id="s01-c4"><label for="s01-c4"><code>chmod 640</code>을 적용한 파일을 다른 사용자로 읽으려 했을 때 거부되는 것을 직접 확인했다</label></li>
+      <li><input type="checkbox" id="s01-c5"><label for="s01-c5">프로세스를 <code>kill</code>로 정중히 종료해 보고, <code>-9</code>와 무엇이 다른지 설명할 수 있다</label></li>
+      <li><input type="checkbox" id="s01-c6"><label for="s01-c6">패키지를 설치하고, 그 패키지가 어떤 파일을 깔았는지 <code>dpkg -L</code>로 확인했다</label></li>
+      <li><input type="checkbox" id="s01-c7"><label for="s01-c7">서비스를 <code>enable</code>한 뒤 재부팅해도 살아 있는 것을 확인했다</label></li>
+      <li><input type="checkbox" id="s01-c8"><label for="s01-c8">유닛 파일을 고치고 <code>daemon-reload</code> → <code>restart</code> 순서로 반영해 봤다</label></li>
+      <li><input type="checkbox" id="s01-c9"><label for="s01-c9"><code>journalctl -u &lt;서비스&gt; -p err --since today</code>로 에러만 걸러 봤다</label></li>
+      <li><input type="checkbox" id="s01-c10"><label for="s01-c10"><code>du</code>로 위에서부터 좁혀 내려가 500MB짜리 파일을 찾아냈다 (과제 3)</label></li>
+      <li><input type="checkbox" id="s01-c11"><label for="s01-c11"><code>df -i</code>가 무엇을 보여주는지, 언제 보는지 설명할 수 있다</label></li>
+      <li><input type="checkbox" id="s01-c12"><label for="s01-c12">키 인증으로 비밀번호 없이 접속하고, <code>~/.ssh/config</code>에 별칭을 등록했다 (과제 4)</label></li>
+      <li><input type="checkbox" id="s01-c13"><label for="s01-c13"><code>sysreport.sh</code> 초안이 다섯 항목을 모두 출력한다 (과제 1)</label></li>
+    </ul>
+
+    <h2 id="further">더 읽을거리</h2>
+    <ul>
+      <li><a href="https://ubuntu.com/server/docs">Ubuntu Server Documentation</a> — 배포판 기준 문서</li>
+      <li><a href="https://man7.org/linux/man-pages/">Linux man pages online</a> — 터미널의 <code>man</code>과 같은 내용을 검색 가능한 형태로</li>
+      <li><a href="https://www.freedesktop.org/software/systemd/man/latest/systemctl.html">systemctl(1)</a> — systemd 공식 매뉴얼</li>
+      <li><a href="https://explainshell.com/">explainshell.com</a> — 긴 명령줄을 붙여 넣으면 옵션마다 설명을 붙여준다</li>
+      <li><a href="https://www.gnu.org/software/coreutils/manual/coreutils.html">GNU Coreutils Manual</a> — <code>ls</code>, <code>cp</code>, <code>du</code> 같은 기본 명령의 원전</li>
+      <li><a href="https://linuxjourney.com/">Linux Journey</a> — 처음부터 순서대로 훑고 싶을 때</li>
+    </ul>
+
+    <div class="callout ok">
+      <p class="callout-title">✓ 다음 단계로 가기 전에</p>
+      <p>체크리스트가 대부분 채워졌다면 Stage 2로 넘어가도 좋다. 여기서 만든
+      <code>sysreport.sh</code>는 Stage 4에서 다시 꺼내 제대로 된 스크립트로 다듬는다.
+      버리지 말고 저장소에 커밋해 두자 — 그건 Stage 3에서 한다.</p>
     </div>
 
     <div class="pager">
