@@ -32,14 +32,422 @@
       <p class="lead">브랜치 전략, 리베이스/머지, PR 리뷰, 태그와 릴리스.</p>
       <div class="hero-meta">
         <span>예상 <b>14</b>시간</span>
-        <span><span class="badge">예정</span></span>
+        <span><span class="badge done">완료</span></span>
       </div>
     </section>
 
-    <div class="placeholder">
-      <h2>아직 작성 중입니다</h2>
-      <p>이 단계의 본문은 준비 중입니다. 학습 계획에 따라 순서대로 채워집니다.</p>
-      <p><a href="../../plan.html">전체 학습 계획 보기 →</a></p>
+    <h2 id="goals">이 단계를 끝내면</h2>
+    <ul>
+      <li>커밋이 무엇을 담는지 알고, 리뷰하기 좋은 크기로 쪼개 커밋할 수 있다.</li>
+      <li>충돌을 직접 만들고 해결할 수 있으며, 무엇이 충돌한 것인지 설명할 수 있다.</li>
+      <li>merge와 rebase 중 하나를 고르고 그 이유를 댈 수 있다.</li>
+      <li>잘못 올린 커밋을 이력을 망가뜨리지 않고 되돌릴 수 있다.</li>
+      <li>PR을 열고 리뷰를 받고 머지하는 흐름을 혼자 굴릴 수 있다.</li>
+    </ul>
+
+    <h2 id="prereq">준비물</h2>
+    <ul>
+      <li>Stage 1의 리눅스 환경과 <code>git</code>. 없으면 <code>sudo apt install -y git</code>.</li>
+      <li>GitHub 계정. 실습 저장소를 하나 만든다.</li>
+      <li>Stage 1에서 만든 <code>sysreport.sh</code> — 이번 단계에서 저장소에 넣는다.</li>
+    </ul>
+    <pre><code>git config --global user.name "본인 이름"
+git config --global user.email "본인@메일"
+git config --global init.defaultBranch main
+git config --global pull.rebase false     # pull 시 merge (기본 동작을 명시)</code></pre>
+    <p>SSH 키 인증은 Stage 2… 가 아니라 Stage 1에서 만들었다. GitHub에 공개키를 등록하면
+    비밀번호 없이 push할 수 있다.</p>
+    <pre><code>cat ~/.ssh/id_ed25519.pub     # 이 내용을 GitHub → Settings → SSH keys에 붙여넣는다
+ssh -T git@github.com         # Hi &lt;username&gt;! 이 나오면 성공</code></pre>
+
+    <nav class="toc">
+      <p>목차</p>
+      <ol>
+        <li><a href="#model">세 개의 공간</a></li>
+        <li><a href="#commit">커밋 — 무엇을 얼마나 담나</a></li>
+        <li><a href="#history">이력 읽기</a></li>
+        <li><a href="#branch">브랜치</a></li>
+        <li><a href="#integrate">합치기 — merge와 rebase</a></li>
+        <li><a href="#conflict">충돌 해결</a></li>
+        <li><a href="#undo">되돌리기</a></li>
+        <li><a href="#remote">원격과 PR</a></li>
+        <li><a href="#strategy">브랜치 전략과 태그</a></li>
+      </ol>
+    </nav>
+
+    <h2 id="model">1. 세 개의 공간</h2>
+    <p>Git이 어렵게 느껴지는 이유는 명령이 많아서가 아니라, 파일이 세 곳에 동시에 존재한다는 걸
+    모른 채 명령을 외우기 때문이다. 이 그림 하나가 나머지를 설명한다.</p>
+
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>공간</th><th>무엇인가</th><th>여기로 보내는 명령</th></tr></thead>
+        <tbody>
+          <tr><td>작업 디렉터리</td><td>지금 편집기로 보고 있는 파일</td><td>—</td></tr>
+          <tr><td>스테이징(index)</td><td>다음 커밋에 넣기로 <b>고른</b> 변경</td><td><code>git add</code></td></tr>
+          <tr><td>저장소(.git)</td><td>커밋으로 확정된 이력</td><td><code>git commit</code></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <pre><code>git status              # 세 공간의 차이를 한눈에
+git diff                # 작업 디렉터리 vs 스테이징 (아직 add 안 한 것)
+git diff --staged       # 스테이징 vs 마지막 커밋 (add는 했고 commit 안 한 것)</code></pre>
+    <div class="callout">
+      <p class="callout-title">💡 스테이징은 귀찮은 절차가 아니다</p>
+      <p>한 번에 여러 가지를 고쳤을 때, 그중 <b>관련된 것만 골라</b> 하나의 커밋으로 만들라고 있는 공간이다.
+      <code>git add -p</code>를 쓰면 같은 파일 안에서도 조각(hunk) 단위로 골라 담을 수 있다.
+      이 한 명령이 커밋 품질을 가장 크게 바꾼다.</p>
+    </div>
+    <pre><code>git add -p              # 조각마다 y/n으로 고른다
+git add .               # 전부 (편하지만 관련 없는 변경이 섞이기 쉽다)
+git restore --staged file.txt   # 스테이징에서 빼기 (변경은 유지)
+git restore file.txt            # 작업 디렉터리 변경 버리기 — 되돌릴 수 없다</code></pre>
+
+    <h2 id="commit">2. 커밋 — 무엇을 얼마나 담나</h2>
+    <p>좋은 커밋은 <b>하나의 논리적 변경</b>을 담고, 그것만으로도 코드가 동작한다.
+    "오전 작업"처럼 시간으로 자르지 말고 의미로 자른다.</p>
+
+    <pre><code>git commit -m "Add disk usage section to sysreport"
+git commit                       # 편집기가 열린다. 본문을 쓸 땐 이쪽
+git commit --amend               # 직전 커밋 수정 (push 전에만!)</code></pre>
+
+    <h3>커밋 메시지</h3>
+    <p>널리 쓰이는 형태는 이렇다. 첫 줄은 50자 내외의 요약, 빈 줄, 그리고 본문이다.</p>
+    <pre><code>Fix disk report skipping tmpfs mounts
+
+df -h lists tmpfs entries that always show 100% used, which made
+the report look alarming on healthy machines. Filter them out with
+-x tmpfs instead of post-processing the output.</code></pre>
+    <p>첫 줄은 <b>명령형</b>으로 쓴다("Fix", "Add", "Remove"). "무엇을"이 아니라
+    <b>"왜"</b>를 본문에 쓴다 — 무엇을 바꿨는지는 diff가 이미 말해주지만, 왜 그랬는지는
+    사람만 남길 수 있다.</p>
+
+    <div class="callout warn">
+      <p class="callout-title">⚠ 비밀은 커밋하는 순간 영구적이다</p>
+      <p>API 키나 <code>.env</code>를 커밋했다가 다음 커밋에서 지워도 <b>이력에는 그대로 남는다.</b>
+      이미 push했다면 그 키는 유출된 것으로 간주하고 <b>즉시 폐기·재발급</b>해야 한다.
+      이력에서 지우는 것은 그다음 문제다. 이 주제는 Stage 14에서 스캔 도구와 함께 다시 다룬다.</p>
+    </div>
+    <pre><code>cat &gt; .gitignore &lt;&lt;'EOF'
+.env
+*.log
+__pycache__/
+node_modules/
+EOF
+git add .gitignore &amp;&amp; git commit -m "Add gitignore"</code></pre>
+    <p><code>.gitignore</code>는 <b>아직 추적되지 않는</b> 파일에만 적용된다. 이미 커밋한 파일은
+    <code>git rm --cached &lt;파일&gt;</code>로 추적을 먼저 끊어야 한다.</p>
+
+    <h2 id="history">3. 이력 읽기</h2>
+    <pre><code>git log --oneline -10                 # 최근 10개 요약
+git log --oneline --graph --all       # 브랜치 갈라짐을 그림으로
+git log -p sysreport.sh               # 이 파일이 어떻게 변해왔나
+git log --author="이름" --since="1 week ago"
+
+git show &lt;커밋&gt;                        # 이 커밋이 무엇을 바꿨나
+git blame sysreport.sh                # 각 줄을 마지막으로 바꾼 커밋</code></pre>
+    <p><code>git blame</code>은 범인을 찾는 도구가 아니라 <b>맥락을 찾는</b> 도구다.
+    "이 이상한 줄은 왜 있지?"의 답은 대개 그 줄을 넣은 커밋의 메시지에 있다.</p>
+
+    <pre><code>git bisect start
+git bisect bad                  # 지금은 고장났다
+git bisect good v1.0            # 이 시점엔 멀쩡했다
+# git이 중간 커밋으로 이동시킨다. 테스트하고 good/bad를 답한다
+git bisect reset                # 끝나면 원위치</code></pre>
+    <p><code>bisect</code>는 이진 탐색으로 "어느 커밋이 망가뜨렸나"를 찾는다.
+    커밋이 1000개여도 10번만 확인하면 된다. 커밋을 작게 나눠야 하는 실용적인 이유가 이것이다.</p>
+
+    <h2 id="branch">4. 브랜치</h2>
+    <p>브랜치는 무거운 복사본이 아니라 <b>커밋을 가리키는 이름표</b>다. 그래서 만드는 비용이
+    거의 0이고, 부담 없이 만들었다 지우는 것이 정상적인 사용법이다.</p>
+    <pre><code>git switch -c feature/disk-alerts     # 만들면서 이동 (구버전: git checkout -b)
+git switch main                       # 이동
+git branch -v                         # 목록과 각자의 최신 커밋
+git branch -d feature/disk-alerts     # 삭제 (머지된 것만)
+git branch -D feature/disk-alerts     # 강제 삭제 — 머지 안 된 커밋이 사라진다</code></pre>
+    <div class="callout">
+      <p class="callout-title">💡 switch와 restore</p>
+      <p>예전에는 <code>git checkout</code>이 브랜치 이동과 파일 복원을 둘 다 했다. 헷갈린다는 지적이
+      많아 <code>git switch</code>(브랜치)와 <code>git restore</code>(파일)로 갈라졌다.
+      오래된 문서는 아직 <code>checkout</code>을 쓰지만, 새 명령이 실수를 줄여준다.</p>
+    </div>
+
+    <h2 id="integrate">5. 합치기 — merge와 rebase</h2>
+    <p>둘 다 "내 브랜치에 다른 브랜치의 변경을 가져온다"는 같은 목적을 갖지만,
+    <b>이력에 남기는 모양이 다르다.</b></p>
+
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th></th><th><code>merge</code></th><th><code>rebase</code></th></tr></thead>
+        <tbody>
+          <tr><td>이력 모양</td><td>갈라졌다 합쳐진 그대로 보존</td><td>일직선으로 펴짐</td></tr>
+          <tr><td>커밋 해시</td><td>유지</td><td><b>새로 만들어짐</b></td></tr>
+          <tr><td>안전한 곳</td><td>어디서나</td><td>나만 쓰는 브랜치</td></tr>
+          <tr><td>충돌 해결</td><td>한 번</td><td>커밋마다 반복될 수 있음</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <pre><code>git switch feature/disk-alerts
+git merge main        # main의 변경을 내 브랜치로 가져온다
+
+# 또는
+git rebase main       # 내 커밋들을 main 위에 다시 얹는다</code></pre>
+
+    <div class="callout warn">
+      <p class="callout-title">⚠ 남이 쓰는 브랜치는 rebase하지 않는다</p>
+      <p><code>rebase</code>는 커밋을 <b>다시 만든다</b>. 해시가 바뀌므로, 그 커밋을 이미 받아 간 사람의
+      저장소와 이력이 어긋난다. 그 상태에서 <code>push --force</code>하면 상대의 작업이 사라질 수 있다.
+      규칙 하나만 기억하자: <b>공유된 브랜치는 merge, 내 로컬 브랜치는 rebase.</b></p>
+    </div>
+
+    <p>내 브랜치를 정리할 때는 대화형 rebase가 유용하다.</p>
+    <pre><code>git rebase -i HEAD~3     # 최근 3개 커밋을 정리 (squash로 합치기, reword로 메시지 수정)</code></pre>
+    <p>push하기 전에 "오타 수정", "다시 수정" 같은 커밋을 하나로 합쳐 두면 리뷰어가 읽을 이력이
+    깔끔해진다. 이미 push한 커밋에는 하지 않는다.</p>
+
+    <h2 id="conflict">6. 충돌 해결</h2>
+    <p>충돌은 <b>같은 파일의 같은 줄</b>을 양쪽에서 다르게 고쳤을 때 일어난다. Git이 어느 쪽이
+    옳은지 판단할 수 없어 사람에게 넘기는 것이지, 무언가 고장난 게 아니다.</p>
+    <pre><code>git merge main
+# Auto-merging sysreport.sh
+# CONFLICT (content): Merge conflict in sysreport.sh
+# Automatic merge failed; fix conflicts and then commit the result.
+
+git status              # 어떤 파일이 충돌했는지</code></pre>
+    <p>충돌한 파일을 열면 이렇게 표시된다.</p>
+    <pre><code>&lt;&lt;&lt;&lt;&lt;&lt;&lt; HEAD
+df -h --output=source,pcent
+=======
+df -h -x tmpfs
+&gt;&gt;&gt;&gt;&gt;&gt;&gt; main</code></pre>
+    <ul>
+      <li><code>&lt;&lt;&lt;&lt;&lt;&lt;&lt; HEAD</code>부터 <code>=======</code>까지 — <b>내</b> 브랜치의 내용</li>
+      <li><code>=======</code>부터 <code>&gt;&gt;&gt;&gt;&gt;&gt;&gt;</code>까지 — <b>가져오는</b> 브랜치의 내용</li>
+    </ul>
+    <p>해결은 "둘 중 하나 고르기"가 아니다. 양쪽 의도를 이해하고 <b>올바른 최종 코드</b>를 쓰는 것이다.
+    위 예라면 두 의도(사용률 표시 + tmpfs 제외)를 다 살린 한 줄이 답일 수 있다.
+    표시 기호(<code>&lt;&lt;&lt;</code>, <code>===</code>, <code>&gt;&gt;&gt;</code>)는 <b>반드시 전부 지운다.</b></p>
+    <pre><code>git add sysreport.sh          # 해결했다고 표시
+git merge --continue          # (rebase 중이면 git rebase --continue)
+
+git merge --abort             # 포기하고 충돌 전으로 되돌리기</code></pre>
+    <div class="callout">
+      <p class="callout-title">💡 막혔을 때는 abort가 정답이다</p>
+      <p>충돌 해결 중 뭐가 뭔지 모르겠으면 <code>--abort</code>로 깨끗하게 원위치할 수 있다.
+      Git에서 되돌릴 수 없는 상황은 생각보다 훨씬 적다. 겁내지 말고 실험하자.</p>
+    </div>
+
+    <h2 id="undo">7. 되돌리기</h2>
+    <p>Git 명령 중 가장 헷갈리는 영역이다. 기준은 하나다 — <b>이미 push했는가.</b></p>
+
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>상황</th><th>명령</th><th>이력은</th></tr></thead>
+        <tbody>
+          <tr><td>아직 add 안 한 변경을 버리기</td><td><code>git restore &lt;파일&gt;</code></td><td>—</td></tr>
+          <tr><td>add한 것을 스테이징에서 빼기</td><td><code>git restore --staged &lt;파일&gt;</code></td><td>—</td></tr>
+          <tr><td>직전 커밋 메시지/내용 수정 (push 전)</td><td><code>git commit --amend</code></td><td>덮어씀</td></tr>
+          <tr><td>최근 커밋 취소, 변경은 남김 (push 전)</td><td><code>git reset --soft HEAD~1</code></td><td>지움</td></tr>
+          <tr><td>최근 커밋과 변경 모두 버리기 (push 전)</td><td><code>git reset --hard HEAD~1</code></td><td>지움</td></tr>
+          <tr><td><b>이미 push한</b> 커밋 되돌리기</td><td><code>git revert &lt;커밋&gt;</code></td><td><b>보존</b> + 취소 커밋 추가</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="callout warn">
+      <p class="callout-title">⚠ push한 것은 revert로 되돌린다</p>
+      <p><code>reset</code>은 이력을 지운다. 이미 공유된 커밋에 쓰면 남의 저장소와 어긋나고,
+      되돌리려면 <code>push --force</code>가 필요해 상대의 작업을 날릴 수 있다.
+      <code>revert</code>는 "이 커밋을 취소하는 <b>새 커밋</b>"을 만들기 때문에 안전하고,
+      "언제 왜 되돌렸는지"까지 이력에 남는다.</p>
+    </div>
+
+    <h3>실수했을 때의 안전망</h3>
+    <pre><code>git reflog
+# a1b2c3d HEAD@{0}: reset: moving to HEAD~1
+# e4f5g6h HEAD@{1}: commit: Add disk alerts        ← 날린 줄 알았던 커밋
+
+git reset --hard e4f5g6h     # 되살리기</code></pre>
+    <p><code>reflog</code>는 HEAD가 거쳐 간 모든 위치를 기록한다. <code>reset --hard</code>로 날린 커밋도
+    보통 30일간은 여기 남아 있다. <b>Git에서 진짜로 잃어버리는 것은 커밋하지 않은 변경뿐이다.</b></p>
+
+    <h2 id="remote">8. 원격과 PR</h2>
+    <pre><code>git remote -v                                 # 연결된 원격 저장소
+git remote add origin git@github.com:&lt;user&gt;/&lt;repo&gt;.git
+
+git push -u origin main       # -u는 추적 설정 (다음부터는 git push만)
+git fetch origin              # 원격 상태만 받아온다 (내 파일은 그대로)
+git pull                      # fetch + merge</code></pre>
+    <div class="callout">
+      <p class="callout-title">💡 pull보다 fetch가 먼저다</p>
+      <p><code>pull</code>은 받아오면서 바로 합친다. 무엇이 올지 모르는 상태에서 합치는 셈이다.
+      <code>git fetch</code> 후 <code>git log --oneline HEAD..origin/main</code>으로 <b>무엇이 올지 먼저 보고</b>
+      합치는 습관이 사고를 줄인다.</p>
+    </div>
+
+    <h3>PR 흐름</h3>
+    <ol>
+      <li><code>git switch -c feature/&lt;이름&gt;</code> — 브랜치를 판다</li>
+      <li>작업하고 의미 단위로 커밋한다</li>
+      <li><code>git push -u origin feature/&lt;이름&gt;</code></li>
+      <li>GitHub에서 PR을 연다. <b>왜</b> 이 변경이 필요한지와 어떻게 확인했는지를 쓴다</li>
+      <li>리뷰를 받고 수정 커밋을 push한다 (PR은 자동으로 갱신된다)</li>
+      <li>머지하고 브랜치를 지운다</li>
+    </ol>
+    <p>머지 방식은 세 가지다. <b>Merge commit</b>은 이력을 그대로 남기고,
+    <b>Squash</b>는 PR의 모든 커밋을 하나로 합치며, <b>Rebase</b>는 일직선으로 얹는다.
+    팀마다 규칙이 다르니 저장소의 관례를 따른다. 혼자 하는 저장소라면 Squash가
+    이력을 읽기 쉽게 유지해 준다.</p>
+
+    <h2 id="strategy">9. 브랜치 전략과 태그</h2>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>전략</th><th>모양</th><th>맞는 곳</th></tr></thead>
+        <tbody>
+          <tr><td>Trunk-based</td><td><code>main</code> 하나 + 짧은 수명의 브랜치</td><td>자주 배포하는 팀. CI/CD와 궁합이 좋다</td></tr>
+          <tr><td>Git Flow</td><td><code>main</code>/<code>develop</code>/<code>release</code>/<code>hotfix</code></td><td>버전을 찍어 배포하는 제품</td></tr>
+          <tr><td>GitHub Flow</td><td><code>main</code> + 기능 브랜치 + PR</td><td>대부분의 경우 여기서 시작하면 된다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>브랜치가 오래 살수록 충돌이 커진다. 어떤 전략이든 <b>브랜치를 짧게 유지하는 것</b>이
+    가장 중요한 규칙이다. 이틀 안에 머지될 크기로 자르자.</p>
+
+    <h3>태그와 릴리스</h3>
+    <pre><code>git tag -a v1.0.0 -m "First release"    # 주석 태그 (누가 언제 왜)
+git push origin v1.0.0
+git tag                                 # 목록
+git describe --tags                     # 지금 커밋이 어느 태그 이후 몇 번째인가</code></pre>
+    <p>태그는 "이 커밋이 배포된 버전"이라는 표식이다. 장애가 났을 때 "어느 버전부터 문제인가"를
+    답할 수 있게 해주고, Stage 9의 CI/CD에서 태그를 눌러 배포를 트리거하는 데 쓴다.</p>
+
+    <h2 id="pitfalls">자주 하는 실수</h2>
+
+    <h3>Updates were rejected because the remote contains work you do not have</h3>
+    <pre><code>git push
+# ! [rejected]        main -&gt; main (fetch first)
+# error: failed to push some refs to 'github.com:user/repo.git'</code></pre>
+    <p>내가 마지막으로 받아온 뒤 누군가 원격에 커밋을 올렸다는 뜻이다. 정상적인 상황이고,
+    받아서 합친 뒤 다시 올리면 된다.</p>
+    <pre><code>git pull        # 또는 git fetch 후 확인하고 git merge origin/main
+git push</code></pre>
+    <p>여기서 <code>git push --force</code>로 뚫으면 남의 커밋을 지우게 된다.
+    <b>이 에러에 대한 답은 절대 force가 아니다.</b></p>
+
+    <h3>detached HEAD 상태입니다</h3>
+    <pre><code>git checkout a1b2c3d
+# You are in 'detached HEAD' state...</code></pre>
+    <p>브랜치가 아니라 특정 커밋을 직접 가리키고 있는 상태다. 고장이 아니다.
+    여기서 커밋하면 어떤 브랜치에도 속하지 않아 나중에 찾기 어려워진다.
+    그냥 둘러본 것이면 <code>git switch -</code>로 돌아가고, 여기서 작업을 이어가고 싶으면
+    브랜치를 만들어 붙잡는다.</p>
+    <pre><code>git switch -c fix/from-old-commit</code></pre>
+
+    <h3>.gitignore에 넣었는데 계속 올라간다</h3>
+    <p><code>.gitignore</code>는 <b>아직 추적되지 않는</b> 파일만 무시한다. 이미 한 번 커밋된 파일은
+    계속 추적된다. 추적을 끊어야 한다.</p>
+    <pre><code>git rm --cached .env      # 파일은 남기고 추적만 중단
+git commit -m "Stop tracking .env"</code></pre>
+    <p>다만 이렇게 해도 <b>과거 이력에는 그대로 남아 있다.</b> 비밀이었다면 폐기·재발급이 먼저다.</p>
+
+    <h3>줄바꿈 때문에 파일 전체가 바뀐 것으로 나온다</h3>
+    <pre><code>git diff
+# 파일 전체가 변경된 것처럼 보인다 (실제로는 CRLF ↔ LF 차이)</code></pre>
+    <p>윈도우(CRLF)와 리눅스(LF)의 줄바꿈이 다르기 때문이다. 저장소에 규칙을 박아 두면 끝난다.</p>
+    <pre><code>cat &gt; .gitattributes &lt;&lt;'EOF'
+* text=auto eol=lf
+*.sh text eol=lf
+EOF</code></pre>
+
+    <h3>커밋을 되돌리려다 작업을 날렸다</h3>
+    <p><code>git reset --hard</code>는 커밋뿐 아니라 <b>작업 디렉터리의 변경까지</b> 지운다.
+    커밋된 것이라면 <code>git reflog</code>로 되찾을 수 있지만, <b>한 번도 커밋하지 않은 변경은
+    되찾을 수 없다.</b> 위험한 명령을 치기 전에 커밋하거나 <code>git stash</code>로 치워 두자.</p>
+    <pre><code>git stash                 # 지금 변경을 잠시 치워 둔다
+git stash list
+git stash pop             # 되돌려 놓기</code></pre>
+
+    <h2 id="exercises">직접 해보기</h2>
+
+    <h3>과제 1 — sysreport를 저장소에 넣기</h3>
+    <p>GitHub에 저장소를 만들고, Stage 1의 <code>sysreport.sh</code>를 올린다. 단, 한 커밋에 다 넣지 말고
+    최소 세 개의 의미 있는 커밋으로 나눈다(예: 초기 스크립트 / <code>.gitignore</code> 추가 / README 추가).</p>
+    <p><b>검증:</b> <code>git log --oneline</code>의 각 줄만 읽고도 무엇을 한 커밋인지 알 수 있는가.
+    "update", "fix" 같은 메시지가 없는가.</p>
+
+    <h3>과제 2 — 충돌을 일부러 만들고 해결하기</h3>
+    <p>이 과제가 이 단계의 핵심이다. 충돌을 겪어보지 않으면 실전에서 당황한다.</p>
+    <pre><code>git switch -c feature/a
+sed -i '2i echo "=== A 버전 헤더 ==="' sysreport.sh
+git commit -am "Add header (A)"
+
+git switch main
+sed -i '2i echo "=== B 버전 헤더 ==="' sysreport.sh
+git commit -am "Add header (B)"
+
+git merge feature/a       # 여기서 충돌한다</code></pre>
+    <p>충돌 표시를 읽고, 양쪽 의도를 살린 최종 형태로 직접 고친 뒤 커밋한다.</p>
+    <p><b>검증:</b> <code>grep -c '&lt;&lt;&lt;&lt;&lt;&lt;&lt;' sysreport.sh</code>가 <code>0</code>이고
+    <code>bash sysreport.sh</code>가 정상 실행되는가.</p>
+
+    <h3>과제 3 — 잘못 올린 커밋 되돌리기</h3>
+    <p>일부러 잘못된 커밋(예: 스크립트를 깨뜨리는 변경)을 만들어 push한 뒤, <code>revert</code>로 되돌린다.
+    그다음 <code>reset --hard</code>로도 시도해 보고 무엇이 다른지 <code>git log</code>로 비교한다.</p>
+    <p><b>검증:</b> <code>revert</code> 후 이력에 원래 커밋과 취소 커밋이 <b>둘 다</b> 남아 있는가.
+    왜 push된 커밋에는 <code>reset</code>이 아니라 <code>revert</code>를 써야 하는지 한 문장으로 답할 수 있는가.</p>
+
+    <h3>과제 4 — PR 한 바퀴</h3>
+    <p>브랜치를 만들어 <code>sysreport.sh</code>에 기능 하나를 더하고, PR을 연다.
+    PR 본문에는 무엇을·왜·어떻게 확인했는지를 쓴다. 스스로 리뷰어가 되어 diff를 읽고,
+    고칠 점을 찾아 커밋을 하나 더 얹은 뒤 머지한다.</p>
+    <p><b>검증:</b> 머지 후 <code>git log --oneline --graph</code>에서 브랜치가 갈라졌다 합쳐진 모양을
+    확인할 수 있는가. 로컬의 병합된 브랜치를 정리했는가(<code>git branch -d</code>).</p>
+
+    <h3>과제 5 — reflog로 되살리기</h3>
+    <pre><code>git log --oneline -1          # 지울 커밋 확인
+git reset --hard HEAD~1       # 날린다
+git reflog                    # 찾는다
+git reset --hard &lt;해시&gt;        # 되살린다</code></pre>
+    <p><b>검증:</b> 되살린 뒤 <code>git log --oneline -1</code>이 원래 커밋을 가리키는가.
+    이 안전망이 <b>커밋된 것에만</b> 적용된다는 점을 이해했는가.</p>
+
+    <h2 id="checklist">체크리스트</h2>
+    <p class="muted">브라우저에 저장된다. 끝낸 항목을 표시하며 진행하자.</p>
+    <div class="progress-bar" data-progress-for="stage-03"><i></i></div>
+    <p class="muted"><small data-progress-label></small></p>
+    <ul class="checklist" data-progress="stage-03">
+      <li><input type="checkbox" id="s03-c1"><label for="s03-c1">작업 디렉터리·스테이징·저장소 세 공간을 설명하고 각각을 보는 명령을 안다</label></li>
+      <li><input type="checkbox" id="s03-c2"><label for="s03-c2"><code>git add -p</code>로 같은 파일의 일부만 골라 커밋해 봤다</label></li>
+      <li><input type="checkbox" id="s03-c3"><label for="s03-c3">의미 단위로 나눈 커밋 3개 이상으로 저장소를 만들었다 (과제 1)</label></li>
+      <li><input type="checkbox" id="s03-c4"><label for="s03-c4">커밋 메시지 본문에 "왜"를 쓴 커밋이 하나 이상 있다</label></li>
+      <li><input type="checkbox" id="s03-c5"><label for="s03-c5"><code>.gitignore</code>를 만들고, 이미 추적 중인 파일은 <code>git rm --cached</code>가 필요하다는 것을 확인했다</label></li>
+      <li><input type="checkbox" id="s03-c6"><label for="s03-c6">브랜치를 만들고 옮겨 다니며 <code>git log --graph</code>로 갈라짐을 확인했다</label></li>
+      <li><input type="checkbox" id="s03-c7"><label for="s03-c7">merge와 rebase의 차이를 이력 모양과 커밋 해시 관점에서 설명할 수 있다</label></li>
+      <li><input type="checkbox" id="s03-c8"><label for="s03-c8">공유 브랜치를 rebase하면 안 되는 이유를 말할 수 있다</label></li>
+      <li><input type="checkbox" id="s03-c9"><label for="s03-c9">충돌을 직접 만들고 양쪽 의도를 살려 해결했다 (과제 2)</label></li>
+      <li><input type="checkbox" id="s03-c10"><label for="s03-c10"><code>revert</code>와 <code>reset</code>을 둘 다 써 보고 이력 차이를 비교했다 (과제 3)</label></li>
+      <li><input type="checkbox" id="s03-c11"><label for="s03-c11"><code>git reflog</code>로 날린 커밋을 되살렸다 (과제 5)</label></li>
+      <li><input type="checkbox" id="s03-c12"><label for="s03-c12">PR을 열고 리뷰 후 머지까지 한 바퀴 돌렸다 (과제 4)</label></li>
+      <li><input type="checkbox" id="s03-c13"><label for="s03-c13"><code>push</code> 거부(<code>fetch first</code>)를 만나 <code>--force</code> 없이 해결했다</label></li>
+      <li><input type="checkbox" id="s03-c14"><label for="s03-c14">태그를 붙이고 push해 봤다</label></li>
+    </ul>
+
+    <h2 id="further">더 읽을거리</h2>
+    <ul>
+      <li><a href="https://git-scm.com/book/ko/v2">Pro Git (한국어)</a> — 무료 공식 책. 3장(브랜치)만 읽어도 값을 한다</li>
+      <li><a href="https://git-scm.com/docs">Git Reference</a> — 명령별 공식 매뉴얼</li>
+      <li><a href="https://docs.github.com/ko/pull-requests">GitHub Docs — Pull requests</a> — PR과 리뷰 기능 전반</li>
+      <li><a href="https://learngitbranching.js.org/?locale=ko">Learn Git Branching</a> — 브랜치와 rebase를 시각적으로 연습</li>
+      <li><a href="https://docs.github.com/ko/authentication/connecting-to-github-with-ssh">GitHub — SSH로 연결</a> — 키 등록이 막힐 때</li>
+    </ul>
+
+    <div class="callout ok">
+      <p class="callout-title">✓ Part 1을 마쳤다</p>
+      <p>여기까지가 기반이다. 서버를 다루고(Stage 1), 연결을 진단하고(Stage 2), 작업을 기록하는(Stage 3)
+      세 가지는 이후 모든 단계에서 매일 쓴다. 다음 Part 2에서는 지금까지 손으로 하던 일을
+      스크립트로 옮긴다 — <code>sysreport.sh</code>가 제대로 된 도구가 되는 곳이다.</p>
     </div>
 
     <div class="pager">
