@@ -32,14 +32,488 @@
       <p class="lead">최소 권한, 시크릿 관리, 취약점 스캔, 공급망 보안, 파이프라인 내 보안 게이트.</p>
       <div class="hero-meta">
         <span>예상 <b>18</b>시간</span>
-        <span><span class="badge">예정</span></span>
+        <span><span class="badge done">완료</span></span>
       </div>
     </section>
 
-    <div class="placeholder">
-      <h2>아직 작성 중입니다</h2>
-      <p>이 단계의 본문은 준비 중입니다. 학습 계획에 따라 순서대로 채워집니다.</p>
-      <p><a href="../../plan.html">전체 학습 계획 보기 →</a></p>
+    <h2 id="goals">이 단계를 끝내면</h2>
+    <ul>
+      <li>보안을 마지막 검사가 아니라 파이프라인의 일부로 만들 수 있다.</li>
+      <li>커밋된 비밀과 취약한 의존성을 머지 전에 자동으로 막을 수 있다.</li>
+      <li>컨테이너와 권한을 최소 권한 원칙에 맞게 좁힐 수 있다.</li>
+      <li>공급망 위협이 무엇이고 무엇으로 줄이는지 설명할 수 있다.</li>
+      <li>비밀이 유출됐을 때 무엇을 먼저 할지 안다.</li>
+    </ul>
+
+    <h2 id="prereq">준비물</h2>
+    <ul>
+      <li>Stage 9의 파이프라인. 이번 단계의 검사들은 전부 거기에 붙는다.</li>
+      <li>Stage 7의 이미지와 Stage 3의 저장소.</li>
+    </ul>
+
+    <div class="callout">
+      <p class="callout-title">💡 이 단계는 회수의 장이다</p>
+      <p>지금까지 열세 단계에 걸쳐 보안 관련 경고를 흘려 뒀다 —
+      <code>chmod 777</code>(1), <code>0.0.0.0/0</code> SSH(2, 12), 커밋된 비밀(3),
+      <code>rm -rf "$VAR"</code>(4), <code>shell=True</code>(5), <code>curl -k</code>(2, 6),
+      root로 도는 컨테이너(7), base64일 뿐인 Secret(8), 포크 PR 시크릿(9),
+      평문 state(10), vault의 한계(11), 공개 버킷(12), 로그 속 민감정보(13).
+      이 단계는 그것들을 한자리에 모으고, <b>사람의 기억 대신 자동으로 막는</b> 장치를 붙인다.</p>
+    </div>
+
+    <nav class="toc">
+      <p>목차</p>
+      <ol>
+        <li><a href="#shift">왼쪽으로 옮긴다</a></li>
+        <li><a href="#threat">무엇을 걱정할 것인가</a></li>
+        <li><a href="#secrets">시크릿 관리</a></li>
+        <li><a href="#deps">의존성 취약점</a></li>
+        <li><a href="#sast">코드 검사</a></li>
+        <li><a href="#container">컨테이너 하드닝</a></li>
+        <li><a href="#supply">공급망 보안</a></li>
+        <li><a href="#gate">파이프라인 보안 게이트</a></li>
+        <li><a href="#runtime">운영 중의 보안</a></li>
+      </ol>
+    </nav>
+
+    <h2 id="shift">1. 왼쪽으로 옮긴다</h2>
+    <p>전통적으로 보안은 배포 직전의 검사였다. 그때 발견된 문제는 고치는 데 가장 비싸다 —
+    설계를 되돌려야 하고, 일정은 이미 끝나 있다.</p>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>발견 시점</th><th>고치는 비용</th><th>여기서 잡는 것</th></tr></thead>
+        <tbody>
+          <tr><td>코드 작성 중</td><td>몇 분</td><td>IDE 경고, pre-commit 훅</td></tr>
+          <tr><td>PR</td><td>몇 십 분</td><td>시크릿 스캔, 의존성 검사, SAST</td></tr>
+          <tr><td>배포 전</td><td>몇 시간</td><td>이미지 스캔, 설정 검사</td></tr>
+          <tr><td>운영 중</td><td>며칠</td><td>런타임 탐지</td></tr>
+          <tr><td>유출 후</td><td><b>측정 불가</b></td><td>—</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>DevSecOps의 요점은 <b>보안 담당자가 열심히 하는 것</b>이 아니라,
+    <b>검사를 자동화해 개발자가 만든 자리에서 바로 알게 하는 것</b>이다.</p>
+    <div class="callout warn">
+      <p class="callout-title">⚠ 검사를 늘리면 사람들이 우회하기 시작한다</p>
+      <p>Stage 9의 "느린 파이프라인은 무시된다"가 여기서도 그대로다.
+      경고가 500개 나오는 스캐너는 아무도 안 본다. <b>차단할 것은 적게, 확실하게</b> 정하고
+      나머지는 리포트로 남기자. 처음에는 "새로 추가되는 것만" 막는 것도 좋은 전략이다.</p>
+    </div>
+
+    <h2 id="threat">2. 무엇을 걱정할 것인가</h2>
+    <p>모든 위협을 다 막을 수는 없다. 우리 시스템에 실제로 해당하는 것부터 본다.</p>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>위협</th><th>구체적으로</th><th>주된 방어</th></tr></thead>
+        <tbody>
+          <tr><td>자격증명 유출</td><td>커밋된 키, 로그에 찍힌 토큰</td><td>스캔 + 단기 자격증명</td></tr>
+          <tr><td>취약한 의존성</td><td>알려진 CVE가 있는 패키지</td><td>SCA + 자동 업데이트</td></tr>
+          <tr><td>과도한 권한</td><td><code>*</code> 정책, root 컨테이너</td><td>최소 권한</td></tr>
+          <tr><td>노출된 표면</td><td>공개 버킷, 열린 포트</td><td>기본 차단 + 설정 검사</td></tr>
+          <tr><td>공급망</td><td>변조된 이미지, 악성 패키지</td><td>고정 + 서명 + SBOM</td></tr>
+          <tr><td>애플리케이션 취약점</td><td>주입, 인증 우회</td><td>SAST/DAST, 리뷰</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>순서를 정할 때의 질문은 <b>"이게 뚫리면 무엇을 잃는가"</b>다.
+    고객 데이터가 있는 DB의 접근 권한이, 사내 위키의 XSS보다 먼저다.</p>
+
+    <h2 id="secrets">3. 시크릿 관리</h2>
+    <p>Stage 3에서 "커밋한 비밀은 이력에 영원히 남는다"고 했다. 그 뒤로 여러 단계에서
+    같은 문제가 형태를 바꿔 나타났다. 원칙은 하나다 — <b>비밀은 코드와 같은 곳에 두지 않는다.</b></p>
+
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>수준</th><th>방식</th><th>평가</th></tr></thead>
+        <tbody>
+          <tr><td>최악</td><td>코드에 하드코딩</td><td>이력에 영원히 남는다</td></tr>
+          <tr><td>나쁨</td><td><code>.env</code> 파일을 서버에 복사</td><td>누가 언제 봤는지 알 수 없다</td></tr>
+          <tr><td>보통</td><td>CI 시크릿 / k8s Secret</td><td>접근 통제는 되지만 장기 자격증명</td></tr>
+          <tr><td>좋음</td><td>시크릿 관리 서비스에서 조회</td><td>중앙 관리, 감사 로그, 회전 가능</td></tr>
+          <tr><td>가장 좋음</td><td><b>비밀 자체가 없다</b> — OIDC/워크로드 아이덴티티</td><td>유출될 것이 없다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>Stage 9의 OIDC와 Stage 12의 인스턴스 프로파일이 마지막 줄에 해당한다.
+    "어떻게 안전하게 저장할까"보다 <b>"저장하지 않을 수 있나"</b>를 먼저 묻자.</p>
+
+    <h3>커밋된 비밀 찾기</h3>
+    <pre><code># gitleaks — 이력 전체를 스캔한다
+docker run --rm -v "$PWD:/repo" zricethezav/gitleaks:latest detect \
+  --source=/repo --verbose
+
+# 커밋 전에 막기 (pre-commit 훅)
+pip install pre-commit
+cat &gt; .pre-commit-config.yaml &lt;&lt;'YAML'
+repos:
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.21.2
+    hooks:
+      - id: gitleaks
+YAML
+pre-commit install</code></pre>
+    <p>GitHub은 <b>Secret scanning</b>을 기본 제공한다(공개 저장소는 무료).
+    주요 서비스의 키 형식을 알아보고, 발견되면 <b>발급처에 자동으로 알려</b> 폐기시킨다.
+    Settings → Code security에서 켜자.</p>
+
+    <div class="callout warn">
+      <p class="callout-title">⚠ 유출됐을 때의 순서 — 폐기가 먼저다</p>
+      <p>키를 커밋했다는 걸 알았을 때 사람들은 대개 이력을 지우려 든다. <b>순서가 틀렸다.</b></p>
+      <ol>
+        <li><b>즉시 폐기·재발급한다.</b> 공개 저장소라면 이미 봇이 긁어 갔다고 가정한다</li>
+        <li>그 키로 무엇이 일어났는지 <b>로그를 확인한다</b> (누가 언제 썼나)</li>
+        <li>그다음에 이력 정리를 고민한다 (<code>git filter-repo</code> 등 — 협업자 모두에게 영향이 간다)</li>
+      </ol>
+      <p>이력에서 지워도 이미 클론한 사람, 포크, 캐시에는 남아 있다.
+      <b>지우는 것은 유출을 되돌리지 못한다.</b></p>
+    </div>
+
+    <h2 id="deps">4. 의존성 취약점</h2>
+    <p>내가 쓴 코드보다 <b>내가 가져온 코드</b>가 훨씬 많다. 파이썬 프로젝트 하나에
+    직접 의존성 5개, 전이 의존성 80개는 흔하다.</p>
+    <pre><code># 파이썬
+pip install pip-audit
+pip-audit -r requirements.txt
+
+# 컨테이너 이미지와 파일시스템 (Stage 7의 이미지)
+docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
+  aquasec/trivy:latest image weatherboard:0.1 --severity HIGH,CRITICAL
+
+# 저장소 전체
+trivy fs --scanners vuln,secret,misconfig .</code></pre>
+    <p>GitHub의 <b>Dependabot</b>은 취약점을 알리고 <b>업데이트 PR을 자동으로 열어 준다.</b>
+    Stage 5의 테스트와 Stage 9의 CI가 있으면 그 PR이 안전한지 자동으로 검증되니,
+    셋이 함께 있을 때 값을 한다.</p>
+    <pre><code># .github/dependabot.yml
+version: 2
+updates:
+  - package-ecosystem: pip
+    directory: /
+    schedule: { interval: weekly }
+  - package-ecosystem: docker
+    directory: /
+    schedule: { interval: weekly }
+  - package-ecosystem: github-actions      # 액션도 의존성이다
+    directory: /
+    schedule: { interval: weekly }</code></pre>
+
+    <div class="callout">
+      <p class="callout-title">💡 CVE가 있다고 전부 위험한 것은 아니다</p>
+      <p>스캐너가 CRITICAL 30개를 뱉어도 그중 대부분은 우리가 <b>쓰지 않는 코드 경로</b>이거나
+      공격자가 닿을 수 없는 위치에 있다. 그렇다고 무시하라는 뜻은 아니고,
+      <b>맥락을 봐야 한다</b>는 뜻이다. 우선순위는 (1) 인터넷에 노출된 컴포넌트,
+      (2) 실제로 호출되는 코드 경로, (3) 익스플로잇이 공개된 것 순이다.
+      기준 없이 "CRITICAL 0개"를 요구하면 팀은 스캐너를 끄는 쪽을 택한다.</p>
+    </div>
+
+    <h2 id="sast">5. 코드 검사</h2>
+    <pre><code># 파이썬 정적 분석
+pip install bandit
+bandit -r weatherboard/ -ll        # -ll: MEDIUM 이상만
+
+# 셸 스크립트 — Stage 4의 그 도구가 보안 검사이기도 하다
+shellcheck sysreport.sh
+
+# 여러 언어를 한 번에
+docker run --rm -v "$PWD:/src" semgrep/semgrep semgrep --config=auto /src</code></pre>
+    <p>Stage 5에서 경고한 <code>subprocess</code>의 <code>shell=True</code>,
+    Stage 4의 인용하지 않은 변수는 <b>정적 분석이 자동으로 잡아 준다.</b>
+    사람의 기억에 의존하지 않게 만드는 것이 이 절의 요점이다.</p>
+    <p>GitHub의 <b>CodeQL</b>은 저장소에 워크플로 하나로 붙고 결과를 Security 탭에 모은다.
+    공개 저장소는 무료다.</p>
+
+    <h2 id="container">6. 컨테이너 하드닝</h2>
+    <p>Stage 7에서 "root로 돌지 않는다"고 한 것의 나머지다.</p>
+    <pre><code>FROM python:3.12-slim AS builder
+# ... 빌드 ...
+
+FROM python:3.12-slim
+RUN useradd --create-home --uid 10001 app
+COPY --from=builder /opt/venv /opt/venv
+COPY weatherboard/ /app/weatherboard/
+USER 10001                              # 숫자 UID로 (k8s가 검증할 수 있다)
+ENV PATH="/opt/venv/bin:$PATH" HOST=0.0.0.0
+EXPOSE 8000
+CMD ["python", "-m", "weatherboard.app"]</code></pre>
+
+    <p>쿠버네티스에서는 한 층 더 조인다.</p>
+    <pre><code>      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: app
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true      # 쓰기가 필요하면 emptyDir을 마운트
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            limits: { cpu: 500m, memory: 256Mi }   # Stage 8의 그것 — 보안 장치이기도 하다</code></pre>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>설정</th><th>막는 것</th></tr></thead>
+        <tbody>
+          <tr><td><code>runAsNonRoot</code></td><td>컨테이너 탈출 시 피해 범위</td></tr>
+          <tr><td><code>readOnlyRootFilesystem</code></td><td>침입자가 도구를 내려받아 심는 것</td></tr>
+          <tr><td><code>drop: ["ALL"]</code></td><td>불필요한 커널 권한</td></tr>
+          <tr><td><code>allowPrivilegeEscalation: false</code></td><td>setuid를 통한 권한 상승</td></tr>
+          <tr><td>리소스 <code>limits</code></td><td>한 파드가 노드 전체를 마비시키는 것</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>Stage 7에서 본 멀티스테이지가 보안 장치이기도 하다 —
+    <b>컴파일러와 셸이 없는 이미지에서는 침입자가 할 수 있는 일이 적다.</b>
+    distroless 이미지가 그 극단이다.</p>
+    <div class="callout warn">
+      <p class="callout-title">⚠ docker.sock을 컨테이너에 마운트하지 않는다</p>
+      <p>Stage 7에서 "docker 그룹은 사실상 root"라고 했다. 컨테이너 안에
+      <code>/var/run/docker.sock</code>을 넣으면 그 컨테이너가 <b>호스트의 root</b>가 된다.
+      CI 러너에서 흔히 보이는 패턴인데, 대안(Kaniko, BuildKit rootless, buildah)이 있다.</p>
+    </div>
+
+    <h2 id="supply">7. 공급망 보안</h2>
+    <p>내가 쓰는 것이 <b>정말 내가 의도한 그것인지</b>를 다루는 영역이다.</p>
+
+    <h3>고정한다</h3>
+    <pre><code># 나쁨 — 무엇이 올지 모른다
+FROM python:3.12-slim
+- uses: actions/checkout@v4
+
+# 좋음 — 다이제스트로 고정
+FROM python:3.12-slim@sha256:1e8cfa0af74f8...
+- uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683   # v4.2.2</code></pre>
+    <p>Stage 7·8·10에서 반복한 "버전을 고정하라"가 여기서 보안 이유를 얻는다.
+    태그는 <b>움직일 수 있고</b>, 서드파티 액션이 침해되면 태그가 악성 커밋을 가리키게 된다.
+    실제로 일어난 사고다. 다이제스트는 움직이지 않는다.</p>
+
+    <h3>SBOM과 서명</h3>
+    <pre><code># SBOM — 이 이미지에 무엇이 들어 있는지의 목록
+docker run --rm anchore/syft:latest weatherboard:0.1 -o spdx-json &gt; sbom.json
+
+# 서명과 검증 (Sigstore cosign, 키 없이 OIDC로)
+cosign sign ghcr.io/3r15/weatherboard@sha256:...
+cosign verify ghcr.io/3r15/weatherboard@sha256:... \
+  --certificate-identity-regexp 'https://github.com/3r15/.*' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com</code></pre>
+    <p>SBOM이 있으면 새 CVE가 공개됐을 때 <b>"우리가 영향을 받나"를 몇 초 안에</b> 답할 수 있다.
+    서명은 "이 이미지가 우리 파이프라인에서 나왔다"를 증명한다 —
+    Stage 9의 OIDC가 여기서도 열쇠 없는 인증으로 쓰인다.</p>
+
+    <h2 id="gate">8. 파이프라인 보안 게이트</h2>
+    <p>지금까지의 검사를 Stage 9의 파이프라인에 붙인다.</p>
+    <pre><code>name: Security
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "0 3 * * 1"        # 새 CVE는 코드가 안 바뀌어도 생긴다
+
+permissions:
+  contents: read
+
+jobs:
+  secrets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }        # 이력 전체를 봐야 한다
+      - uses: gitleaks/gitleaks-action@v2
+
+  deps:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: pip install pip-audit
+      - run: pip-audit -r requirements.txt
+
+  image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t scan-target:${{ github.sha }} .
+      - uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: scan-target:${{ github.sha }}
+          severity: HIGH,CRITICAL
+          exit-code: "1"              # 발견되면 실패시킨다
+          ignore-unfixed: true        # 고칠 방법이 없는 것은 제외
+
+  code:
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write          # 결과를 Security 탭에 올린다
+    steps:
+      - uses: actions/checkout@v4
+      - uses: github/codeql-action/init@v3
+        with: { languages: python }
+      - uses: github/codeql-action/analyze@v3</code></pre>
+
+    <div class="callout">
+      <p class="callout-title">💡 schedule이 있는 이유</p>
+      <p>어제 깨끗했던 이미지가 오늘 취약해질 수 있다 — <b>코드가 바뀌어서가 아니라
+      새 CVE가 공개돼서</b>다. PR 때만 검사하면 오래 배포하지 않은 서비스는 영원히 모른다.
+      주 1회 정기 스캔이 그 구멍을 막는다.</p>
+    </div>
+
+    <h3>무엇을 차단하고 무엇을 보고할 것인가</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>검사</th><th>PR에서</th><th>이유</th></tr></thead>
+        <tbody>
+          <tr><td>시크릿 발견</td><td><b>차단</b></td><td>오탐이 적고 피해가 크다</td></tr>
+          <tr><td>고칠 수 있는 CRITICAL 취약점</td><td><b>차단</b></td><td>업데이트 한 줄이면 된다</td></tr>
+          <tr><td>고칠 수 없는 취약점</td><td>보고</td><td>막아도 할 수 있는 게 없다</td></tr>
+          <tr><td>SAST 신규 발견</td><td>보고 (또는 리뷰 필수)</td><td>오탐이 있어 판단이 필요하다</td></tr>
+          <tr><td>기존 코드의 SAST 결과</td><td>보고</td><td>차단하면 아무 PR도 못 올린다</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2 id="runtime">9. 운영 중의 보안</h2>
+    <p>파이프라인을 통과했다고 끝이 아니다. Stage 13의 관측이 보안에도 쓰인다.</p>
+    <ul>
+      <li><b>감사 로그</b> — 누가 무엇을 했나. 클라우드의 CloudTrail/Activity Log, 쿠버네티스 감사 로그</li>
+      <li><b>이상 징후 알럿</b> — 평소 없던 곳에서의 로그인, 갑작스러운 데이터 전송량 증가, 권한 변경</li>
+      <li><b>설정 드리프트</b> — Stage 10의 그 개념이 보안에서는 "누가 콘솔에서 방화벽을 열었나"가 된다</li>
+      <li><b>자격증명 회전</b> — 남아 있는 장기 키는 주기적으로 교체. 사람이 하면 안 하게 되니 자동화한다</li>
+    </ul>
+
+    <h3>침해를 가정하고 준비한다</h3>
+    <p>"뚫리지 않는다"가 아니라 <b>"뚫렸을 때 무엇을 할 것인가"</b>를 미리 적어 둔다.
+    Stage 13에서 만든 런북과 같은 문서다.</p>
+    <ol>
+      <li><b>격리</b> — 해당 자격증명 폐기, 인스턴스 분리 (지우지 말 것 — 증거다)</li>
+      <li><b>범위 파악</b> — 감사 로그로 무엇에 접근했는지</li>
+      <li><b>복구</b> — 깨끗한 이미지로 재배포 (Stage 9·10이 여기서 값을 한다)</li>
+      <li><b>회고</b> — 어떻게 들어왔고 왜 못 막았나</li>
+    </ol>
+    <div class="callout">
+      <p class="callout-title">💡 Stage 9·10·11이 보안 도구이기도 하다</p>
+      <p>침해된 서버를 "깨끗한 상태로 되돌리는" 가장 빠른 방법은,
+      그 서버를 <b>지우고 코드에서 다시 만드는</b> 것이다.
+      Terraform과 Ansible과 파이프라인이 있으면 몇 분이고, 없으면 며칠이다.
+      재현 가능한 인프라는 편의 기능이 아니라 <b>복구 능력</b>이다.</p>
+    </div>
+
+    <h2 id="pitfalls">자주 하는 실수</h2>
+
+    <h3>비밀을 커밋하고 다음 커밋에서 지웠다</h3>
+    <pre><code>git rm --cached .env
+git commit -m "Remove .env"        # ← 이력에는 그대로 남아 있다
+git log -p --all -S "API_KEY" | head    # 여전히 찾을 수 있다</code></pre>
+    <p>Stage 3에서 본 그대로다. 지우는 것은 유출을 되돌리지 못한다.
+    <b>폐기·재발급이 먼저</b>고, 이력 정리는 그다음이다.</p>
+
+    <h3>스캐너 결과가 너무 많아 전부 무시한다</h3>
+    <p>CRITICAL 200개짜리 리포트는 0개짜리와 같다. 처음 도입할 때는
+    <b>기준선을 잡고 "새로 추가되는 것만" 차단</b>하는 것이 현실적이다.
+    기존 것은 목록으로 만들어 우선순위대로 줄여 나간다. 완벽을 요구하면 도구가 꺼진다.</p>
+
+    <h3>보안 그룹을 "일단" 열어 두고 잊는다</h3>
+    <pre><code># 지금 열려 있는 것을 주기적으로 확인하는 습관
+aws ec2 describe-security-groups --query \
+  'SecurityGroups[?IpPermissions[?IpRanges[?CidrIp==`0.0.0.0/0`]]].[GroupId,GroupName]'</code></pre>
+    <p>디버깅하느라 연 포트가 그대로 남는 것이 가장 흔한 노출 경로다.
+    Stage 10의 Terraform으로 관리하면 <code>plan</code>에서 <b>리뷰</b>를 거치게 되고,
+    콘솔에서 손으로 연 것은 드리프트로 드러난다.</p>
+
+    <h3>로그에 토큰이 찍힌다</h3>
+    <pre><code>log.info("요청: %s", request.headers)      # Authorization 헤더가 통째로 남는다</code></pre>
+    <p>Stage 13에서 경고한 것이다. 헤더나 본문을 통째로 로깅하는 코드가 사고의 단골이다.
+    민감 필드를 마스킹하는 필터를 로깅 설정에 넣고, <b>로그 저장소에서
+    토큰 패턴을 주기적으로 스캔</b>해 실제로 안 새는지 확인하자.</p>
+
+    <h3>보안을 한 사람에게 맡긴다</h3>
+    <p>"보안 담당자가 나중에 볼 것"이라는 구조에서는, 그 사람이 병목이 되고
+    개발자는 배우지 못한다. 이 단계의 도구들이 전부 <b>파이프라인에</b> 들어가는 이유다 —
+    피드백이 만든 사람에게, 만든 자리에서, 즉시 가야 학습이 일어난다.</p>
+
+    <h2 id="exercises">직접 해보기</h2>
+
+    <h3>과제 1 — 일부러 심고 막히는지 보기</h3>
+    <p>이 과제가 이 단계의 핵심이다. 다음 셋을 브랜치에 심고 PR을 연다.</p>
+    <ol>
+      <li>가짜 API 키 한 줄 (형식이 진짜처럼 보이는 것)</li>
+      <li>알려진 취약점이 있는 옛 패키지 버전</li>
+      <li><code>subprocess.run(cmd, shell=True)</code>에 사용자 입력을 넘기는 코드</li>
+    </ol>
+    <p><b>검증:</b> 세 검사가 각각 <b>어느 것을 잡고 어느 것을 놓쳤는가?</b>
+    PR이 머지 불가 상태가 되는가. 놓친 것이 있다면 왜인지 설명할 수 있는가.</p>
+
+    <h3>과제 2 — 컨테이너 조이기</h3>
+    <p>Stage 7의 이미지를 non-root + 읽기 전용 루트 + capability 전부 제거로 바꾼다.
+    Trivy로 스캔해 전후를 비교한다.</p>
+    <p><b>검증:</b> <code>docker exec &lt;c&gt; id</code>가 root가 아닌가.
+    <code>docker exec &lt;c&gt; touch /test</code>가 <b>실패하는가</b>.
+    애플리케이션은 여전히 정상 동작하는가 (쓰기가 필요한 경로가 있다면 어떻게 해결했나).</p>
+
+    <h3>과제 3 — 보안 파이프라인 붙이기</h3>
+    <p>Stage 9의 저장소에 시크릿 스캔·의존성 검사·이미지 스캔을 추가하고,
+    주 1회 정기 실행도 건다. 무엇을 차단하고 무엇을 보고할지 <b>정하고 그 이유를 적는다.</b></p>
+    <p><b>검증:</b> 정상 PR에서 파이프라인이 몇 초 늘었는가. 그 비용이 감당할 만한가.
+    차단 기준을 정한 근거를 한 문단으로 쓸 수 있는가.</p>
+
+    <h3>과제 4 — 유출 대응 연습</h3>
+    <p>실제로 쓰지 않는 테스트용 API 키를 하나 만들어 커밋하고 push한 뒤,
+    <b>대응 순서를 시간을 재며</b> 밟는다. 폐기 → 사용 로그 확인 → 이력 정리 검토.</p>
+    <p><b>검증:</b> 폐기까지 몇 분 걸렸는가. 그 키가 사용된 기록을 어디서 확인했는가.
+    이 절차를 <code>RUNBOOK.md</code>에 적어 뒀는가.</p>
+
+    <h3>과제 5 — SBOM으로 답하기</h3>
+    <p>이미지의 SBOM을 만들고, 특정 패키지(예: <code>requests</code>)가
+    어느 버전으로 들어 있는지 <b>몇 초 안에</b> 답해 본다.</p>
+    <pre><code>syft weatherboard:0.1 -o json | jq '.artifacts[] | select(.name=="requests") | .version'</code></pre>
+    <p><b>검증:</b> 새 CVE 공지를 받았다고 가정하고, 영향 여부를 판단하는 데
+    몇 초가 걸렸는가. SBOM이 없다면 같은 질문에 어떻게 답할 것인가.</p>
+
+    <h2 id="checklist">체크리스트</h2>
+    <p class="muted">브라우저에 저장된다. 끝낸 항목을 표시하며 진행하자.</p>
+    <div class="progress-bar" data-progress-for="stage-14"><i></i></div>
+    <p class="muted"><small data-progress-label></small></p>
+    <ul class="checklist" data-progress="stage-14">
+      <li><input type="checkbox" id="s14-c1"><label for="s14-c1">발견 시점이 늦을수록 고치는 비용이 커지는 구조를 설명할 수 있다</label></li>
+      <li><input type="checkbox" id="s14-c2"><label for="s14-c2">우리 시스템에서 "뚫리면 가장 잃을 것"을 기준으로 위협 순서를 정했다</label></li>
+      <li><input type="checkbox" id="s14-c3"><label for="s14-c3">시크릿 관리 5단계에서 우리가 어디쯤인지 말할 수 있다</label></li>
+      <li><input type="checkbox" id="s14-c4"><label for="s14-c4"><b>비밀을 저장하지 않는</b> 방법(OIDC, 워크로드 아이덴티티)을 하나 이상 적용했다</label></li>
+      <li><input type="checkbox" id="s14-c5"><label for="s14-c5">시크릿 스캔을 붙이고 일부러 심은 키가 막히는 것을 확인했다 (과제 1)</label></li>
+      <li><input type="checkbox" id="s14-c6"><label for="s14-c6">유출 시 <b>폐기가 이력 정리보다 먼저</b>인 이유를 설명할 수 있다</label></li>
+      <li><input type="checkbox" id="s14-c7"><label for="s14-c7">의존성 스캔을 돌리고 Dependabot을 켰다</label></li>
+      <li><input type="checkbox" id="s14-c8"><label for="s14-c8">CVE 개수가 아니라 맥락으로 우선순위를 정하는 이유를 안다</label></li>
+      <li><input type="checkbox" id="s14-c9"><label for="s14-c9">SAST가 Stage 4·5에서 경고한 패턴을 자동으로 잡는 것을 확인했다</label></li>
+      <li><input type="checkbox" id="s14-c10"><label for="s14-c10">컨테이너를 non-root + 읽기 전용 루트로 조였다 (과제 2)</label></li>
+      <li><input type="checkbox" id="s14-c11"><label for="s14-c11"><code>docker.sock</code> 마운트가 왜 위험한지 설명할 수 있다</label></li>
+      <li><input type="checkbox" id="s14-c12"><label for="s14-c12">이미지와 액션을 다이제스트로 고정하는 보안상 이유를 안다</label></li>
+      <li><input type="checkbox" id="s14-c13"><label for="s14-c13">SBOM을 만들고 특정 패키지 버전을 즉시 조회했다 (과제 5)</label></li>
+      <li><input type="checkbox" id="s14-c14"><label for="s14-c14">보안 파이프라인을 붙이고 차단/보고 기준을 근거와 함께 정했다 (과제 3)</label></li>
+      <li><input type="checkbox" id="s14-c15"><label for="s14-c15">정기 스캔(<code>schedule</code>)이 필요한 이유를 설명할 수 있다</label></li>
+      <li><input type="checkbox" id="s14-c16"><label for="s14-c16">유출 대응 절차를 시간을 재며 연습하고 런북에 적었다 (과제 4)</label></li>
+      <li><input type="checkbox" id="s14-c17"><label for="s14-c17">재현 가능한 인프라가 왜 복구 능력인지 설명할 수 있다</label></li>
+    </ul>
+
+    <h2 id="further">더 읽을거리</h2>
+    <ul>
+      <li><a href="https://owasp.org/www-project-top-ten/">OWASP Top 10</a> — 웹 애플리케이션 위협의 표준 목록</li>
+      <li><a href="https://cheatsheetseries.owasp.org/">OWASP Cheat Sheet Series</a> — 주제별 실무 지침</li>
+      <li><a href="https://docs.github.com/en/code-security">GitHub Code security</a> — Secret scanning, Dependabot, CodeQL</li>
+      <li><a href="https://slsa.dev/">SLSA</a> — 공급망 보안 성숙도 프레임워크</li>
+      <li><a href="https://www.sigstore.dev/">Sigstore</a> — 키 없는 서명과 검증</li>
+      <li><a href="https://kubernetes.io/docs/concepts/security/pod-security-standards/">Pod Security Standards</a> — 쿠버네티스 하드닝 기준</li>
+      <li><a href="https://www.cisecurity.org/cis-benchmarks">CIS Benchmarks</a> — OS와 컨테이너 설정 기준</li>
+    </ul>
+
+    <div class="callout ok">
+      <p class="callout-title">✓ 14단계를 모두 마쳤다</p>
+      <p>리눅스 프롬프트에서 시작해 여기까지 왔다. <code>weatherboard</code>는 이제
+      코드로 정의된 인프라 위에서, 컨테이너로 패키징되어, 파이프라인으로 배포되고,
+      스스로 복구되며, 관측되고, 검사를 통과해야만 배포된다.</p>
+      <p>여기서부터는 깊이의 문제다. 각 단계의 "더 읽을거리"가 다음 문이고,
+      실제로 무언가를 운영해 보는 것이 가장 빠른 학습이다.
+      작은 서비스 하나를 직접 만들어 이 열네 단계를 전부 적용해 보자 —
+      그때 각 단계가 왜 그 순서였는지가 비로소 보인다.</p>
     </div>
 
     <div class="pager">
