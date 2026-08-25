@@ -56,6 +56,18 @@ python3 tools/scaffold.py --check   # CI와 동일한 동기화 검사
 두 검사는 PR과 `main` push마다 CI에서도 돌고, `main`에 올라간 `site/`는
 `.github/workflows/pages.yml`이 GitHub Pages로 배포합니다.
 
+### 배포 최초 1회 설정
+
+GitHub Pages는 저장소 설정에서 한 번 켜야 합니다.
+
+**Settings → Pages → Build and deployment → Source: `GitHub Actions`**
+
+이 설정 전에는 배포 워크플로가 `Create Pages site failed. Error: Resource not
+accessible by integration`으로 실패합니다. 워크플로 토큰에는 Pages를 처음 켤 권한이
+없기 때문입니다. 설정한 뒤 Actions 탭에서 **Deploy to GitHub Pages**를 다시 실행하면
+(`Re-run jobs` 또는 `Run workflow`) 배포됩니다. 이후 `main`의 `site/`가 바뀔 때마다
+자동으로 배포됩니다.
+
 ## 집필 자동화
 
 `.claude/`에 이 저장소 전용 설정이 들어 있습니다.
