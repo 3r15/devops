@@ -1,0 +1,21 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: curriculum.json is valid JSON
+        run: python3 -c "import json; json.load(open('data/curriculum.json'))"
+
+      - name: Generated pages are in sync
+        run: python3 tools/scaffold.py --check
+
+      - name: Internal links resolve
+        run: python3 tools/check_links.py

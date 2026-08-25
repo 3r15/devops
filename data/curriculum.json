@@ -1,0 +1,67 @@
+{
+  "title": "DevOps Learning Path",
+  "description": "14단계 DevOps 학습 커리큘럼",
+  "parts": [
+    {
+      "id": "part-1",
+      "slug": "foundations",
+      "title": "Part 1. 기반 다지기",
+      "subtitle": "Foundations",
+      "summary": "리눅스, 네트워크, 버전 관리. 모든 DevOps 작업이 올라서는 바닥입니다.",
+      "icon": "🧱",
+      "stages": [1, 2, 3]
+    },
+    {
+      "id": "part-2",
+      "slug": "automation",
+      "title": "Part 2. 자동화의 언어",
+      "subtitle": "Automation & Scripting",
+      "summary": "반복을 없애는 도구. Bash로 시스템을 다루고 Python으로 확장합니다.",
+      "icon": "⚙️",
+      "stages": [4, 5]
+    },
+    {
+      "id": "part-3",
+      "slug": "runtime",
+      "title": "Part 3. 서비스와 컨테이너",
+      "subtitle": "Serving & Containers",
+      "summary": "애플리케이션을 실제로 띄우고, 패키징하고, 오케스트레이션합니다.",
+      "icon": "📦",
+      "stages": [6, 7, 8]
+    },
+    {
+      "id": "part-4",
+      "slug": "delivery",
+      "title": "Part 4. 배포와 인프라",
+      "subtitle": "Delivery & Infrastructure",
+      "summary": "파이프라인으로 배포하고, 코드로 인프라를 정의하고, 클라우드에 올립니다.",
+      "icon": "🚀",
+      "stages": [9, 10, 11, 12]
+    },
+    {
+      "id": "part-5",
+      "slug": "operations",
+      "title": "Part 5. 운영과 보안",
+      "subtitle": "Operations & Security",
+      "summary": "돌아가는 시스템을 관찰하고, 지키고, 오래 살아남게 만듭니다.",
+      "icon": "🛡️",
+      "stages": [13, 14]
+    }
+  ],
+  "stages": [
+    { "n": 1,  "slug": "linux",         "title": "Linux",                          "titleKo": "리눅스",              "part": "foundations", "hours": 24, "status": "planned",    "summary": "파일시스템, 권한, 프로세스, 패키지, systemd — 서버 위에서 손이 자유로워지는 단계." },
+    { "n": 2,  "slug": "networking",    "title": "Networking Fundamentals",        "titleKo": "네트워크 기초",        "part": "foundations", "hours": 16, "status": "planned", "summary": "OSI/TCP-IP, IP·서브넷, DNS, HTTP, 방화벽. 장애의 절반은 네트워크에서 시작됩니다." },
+    { "n": 3,  "slug": "git-github",    "title": "Git + GitHub",                   "titleKo": "깃과 깃허브",          "part": "foundations", "hours": 14, "status": "planned", "summary": "브랜치 전략, 리베이스/머지, PR 리뷰, 태그와 릴리스." },
+    { "n": 4,  "slug": "bash",          "title": "Shell Scripting (Bash)",         "titleKo": "셸 스크립팅",          "part": "automation",  "hours": 16, "status": "planned", "summary": "파이프라인, 조건/반복, 함수, set -euo pipefail, 실전 운영 스크립트." },
+    { "n": 5,  "slug": "python",        "title": "Python (Basics)",                "titleKo": "파이썬 기초",          "part": "automation",  "hours": 20, "status": "planned", "summary": "자료구조, 파일·프로세스 다루기, requests, 가상환경, 간단한 자동화 CLI." },
+    { "n": 6,  "slug": "web-servers",   "title": "Web Servers (Nginx / Apache)",   "titleKo": "웹 서버",             "part": "runtime",     "hours": 14, "status": "planned", "summary": "리버스 프록시, 가상 호스트, TLS, 로드밸런싱, 정적 자원 서빙." },
+    { "n": 7,  "slug": "docker",        "title": "Docker",                         "titleKo": "도커",                "part": "runtime",     "hours": 20, "status": "planned", "summary": "이미지·레이어, Dockerfile 최적화, 볼륨/네트워크, Compose." },
+    { "n": 8,  "slug": "kubernetes",    "title": "Kubernetes",                     "titleKo": "쿠버네티스",           "part": "runtime",     "hours": 32, "status": "planned", "summary": "Pod·Deployment·Service·Ingress, ConfigMap/Secret, 헬스체크, Helm 맛보기." },
+    { "n": 9,  "slug": "cicd",          "title": "CI/CD (GitHub Actions / Jenkins)","titleKo": "CI/CD",             "part": "delivery",    "hours": 20, "status": "planned", "summary": "빌드-테스트-배포 파이프라인, 아티팩트, 시크릿, 환경별 배포 전략." },
+    { "n": 10, "slug": "terraform",     "title": "Infrastructure as Code (Terraform)", "titleKo": "코드형 인프라",    "part": "delivery",    "hours": 20, "status": "planned", "summary": "HCL, state, provider/module, plan-apply 워크플로, 드리프트 관리." },
+    { "n": 11, "slug": "ansible",       "title": "Configuration Management (Ansible)", "titleKo": "구성 관리",       "part": "delivery",    "hours": 14, "status": "planned", "summary": "인벤토리, 플레이북, 롤, 멱등성, 시크릿(vault)." },
+    { "n": 12, "slug": "cloud",         "title": "Cloud Platforms (AWS / Azure / GCP)", "titleKo": "클라우드",       "part": "delivery",    "hours": 28, "status": "planned", "summary": "IAM, 컴퓨트, 네트워킹(VPC), 스토리지, 매니지드 서비스, 비용 관리." },
+    { "n": 13, "slug": "observability", "title": "Monitoring & Logging",           "titleKo": "모니터링과 로깅",      "part": "operations",  "hours": 20, "status": "planned", "summary": "Prometheus 메트릭, Grafana 대시보드, ELK 로그 파이프라인, 알럿 설계." },
+    { "n": 14, "slug": "security",      "title": "Security (DevSecOps Basics)",    "titleKo": "보안",                "part": "operations",  "hours": 18, "status": "planned", "summary": "최소 권한, 시크릿 관리, 취약점 스캔, 공급망 보안, 파이프라인 내 보안 게이트." }
+  ]
+}
