@@ -32,14 +32,447 @@
       <p class="lead">IAM, 컴퓨트, 네트워킹(VPC), 스토리지, 매니지드 서비스, 비용 관리.</p>
       <div class="hero-meta">
         <span>예상 <b>28</b>시간</span>
-        <span><span class="badge">예정</span></span>
+        <span><span class="badge done">완료</span></span>
       </div>
     </section>
 
-    <div class="placeholder">
-      <h2>아직 작성 중입니다</h2>
-      <p>이 단계의 본문은 준비 중입니다. 학습 계획에 따라 순서대로 채워집니다.</p>
-      <p><a href="../../plan.html">전체 학습 계획 보기 →</a></p>
+    <h2 id="goals">이 단계를 끝내면</h2>
+    <ul>
+      <li>클라우드의 핵심 구성 요소를 이름이 아니라 <b>역할</b>로 이해하고, 제공사가 달라도 대응시킬 수 있다.</li>
+      <li>최소 권한 원칙에 따라 접근 권한을 설계할 수 있다.</li>
+      <li>VPC와 서브넷을 직접 그리고, 무엇이 인터넷에 노출되는지 설명할 수 있다.</li>
+      <li>직접 운영할 것과 매니지드 서비스에 맡길 것을 판단할 수 있다.</li>
+      <li>월 비용을 항목별로 추정하고, 예산 알럿을 걸 수 있다.</li>
+    </ul>
+
+    <h2 id="prereq">준비물</h2>
+    <ul>
+      <li>클라우드 계정 하나. AWS/Azure/GCP 모두 프리티어가 있다.</li>
+      <li>Stage 10의 Terraform — 이번 단계의 자원은 콘솔이 아니라 코드로 만든다.</li>
+      <li><b>결제 알럿을 가장 먼저 설정한다.</b> 아래 첫 절이 그 이야기다.</li>
+    </ul>
+
+    <div class="callout warn">
+      <p class="callout-title">⚠ 무엇보다 먼저 — 요금 사고를 막는다</p>
+      <p>이 단계에서 초심자가 가장 크게 데는 것은 개념이 아니라 <b>청구서</b>다.
+      실습용으로 띄운 것을 잊고 한 달 뒤 수십만 원을 받는 일이 흔하다.
+      실습을 시작하기 전에 세 가지를 반드시 한다.</p>
+      <ol>
+        <li><b>예산 알럿</b>을 건다 (AWS Budgets / Azure Cost alerts / GCP Budget alerts). 금액은 낮게 — 만 원이라도.</li>
+        <li>루트 계정에 <b>MFA</b>를 켜고, 이후로는 루트를 쓰지 않는다.</li>
+        <li>실습이 끝나면 <b>반드시 정리한다</b>. Terraform으로 만들었다면 <code>terraform destroy</code> 한 번이다 — 이것이 Stage 10을 먼저 배운 이유 중 하나다.</li>
+      </ol>
+    </div>
+
+    <nav class="toc">
+      <p>목차</p>
+      <ol>
+        <li><a href="#model">클라우드를 보는 틀</a></li>
+        <li><a href="#iam">IAM — 누가 무엇을 할 수 있나</a></li>
+        <li><a href="#region">리전과 가용영역</a></li>
+        <li><a href="#network">네트워크 — VPC와 서브넷</a></li>
+        <li><a href="#compute">컴퓨트</a></li>
+        <li><a href="#storage">스토리지</a></li>
+        <li><a href="#managed">매니지드 서비스</a></li>
+        <li><a href="#cost">비용</a></li>
+        <li><a href="#wellarch">잘 만들어진 구성의 조건</a></li>
+      </ol>
+    </nav>
+
+    <h2 id="model">1. 클라우드를 보는 틀</h2>
+    <p>제공사마다 이름이 다르지만 역할은 같다. 이름을 외우지 말고 <b>이 자리에 무엇이 오는가</b>로 보자.</p>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>역할</th><th>AWS</th><th>Azure</th><th>GCP</th></tr></thead>
+        <tbody>
+          <tr><td>권한 관리</td><td>IAM</td><td>Entra ID + RBAC</td><td>IAM</td></tr>
+          <tr><td>가상 네트워크</td><td>VPC</td><td>VNet</td><td>VPC</td></tr>
+          <tr><td>가상 머신</td><td>EC2</td><td>Virtual Machines</td><td>Compute Engine</td></tr>
+          <tr><td>오브젝트 스토리지</td><td>S3</td><td>Blob Storage</td><td>Cloud Storage</td></tr>
+          <tr><td>매니지드 DB</td><td>RDS</td><td>Azure SQL / DB for PostgreSQL</td><td>Cloud SQL</td></tr>
+          <tr><td>로드밸런서</td><td>ELB / ALB</td><td>Load Balancer</td><td>Cloud Load Balancing</td></tr>
+          <tr><td>매니지드 쿠버네티스</td><td>EKS</td><td>AKS</td><td>GKE</td></tr>
+          <tr><td>컨테이너 레지스트리</td><td>ECR</td><td>ACR</td><td>Artifact Registry</td></tr>
+          <tr><td>서버리스 함수</td><td>Lambda</td><td>Functions</td><td>Cloud Functions</td></tr>
+          <tr><td>시크릿 관리</td><td>Secrets Manager</td><td>Key Vault</td><td>Secret Manager</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>이 표가 이 단계의 실용적 요약이다. 하나를 제대로 익히면 나머지는 <b>이름 찾기</b>가 된다.
+    아래 예시는 AWS를 기준으로 하되, 개념은 셋 모두에 적용된다.</p>
+
+    <h3>책임 공유 모델</h3>
+    <p>클라우드를 쓴다고 보안이 남의 일이 되지는 않는다. 경계가 있다.</p>
+    <ul>
+      <li><b>제공사의 책임</b> — 데이터센터, 하드웨어, 하이퍼바이저, 매니지드 서비스의 내부</li>
+      <li><b>내 책임</b> — 접근 권한, 네트워크 설정, OS 패치(VM을 쓴다면), 데이터 암호화, <b>내가 만든 구멍</b></li>
+    </ul>
+    <p>유출 사고의 대부분은 제공사가 아니라 <b>공개로 열어 둔 스토리지 버킷과 지나치게 넓은 권한</b>에서 나온다.
+    둘 다 내 책임 쪽이다.</p>
+
+    <h2 id="iam">2. IAM — 누가 무엇을 할 수 있나</h2>
+    <p>클라우드에서 가장 먼저, 그리고 가장 오래 씨름하게 되는 것이다.
+    구조는 어디나 비슷하다.</p>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>개념</th><th>뜻</th></tr></thead>
+        <tbody>
+          <tr><td><b>주체</b> (principal)</td><td>사람, 애플리케이션, 서비스 — 무언가를 하려는 쪽</td></tr>
+          <tr><td><b>정책</b> (policy)</td><td>무엇을 할 수 있는지 적은 규칙</td></tr>
+          <tr><td><b>역할</b> (role)</td><td>일시적으로 <b>맡는</b> 권한 묶음. 자격증명이 따라오지 않는다</td></tr>
+          <tr><td><b>리소스</b></td><td>권한이 적용되는 대상</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <pre><code>{
+  "Version": "2012-10-17",
+  "Statement": [{
+    "Effect": "Allow",
+    "Action": ["s3:GetObject", "s3:PutObject"],
+    "Resource": "arn:aws:s3:::weatherboard-assets/*"
+  }]
+}</code></pre>
+    <p>읽는 법은 단순하다 — <b>누가(주체) 무엇을(Action) 어디에(Resource) 할 수 있는가.</b>
+    위 정책은 그 버킷 안의 객체만 읽고 쓸 수 있고, 버킷을 지우거나 다른 버킷을 건드릴 수는 없다.</p>
+
+    <div class="callout warn">
+      <p class="callout-title">⚠ 와일드카드는 사고의 씨앗이다</p>
+      <pre><code>"Action": "*", "Resource": "*"      ← 이 계정에서 무엇이든 할 수 있다</code></pre>
+      <p>"일단 되게 하고 나중에 좁히자"로 시작한 <code>*</code>는 <b>절대 좁혀지지 않는다.</b>
+      필요한 액션만 적고, 막히면 그때 하나씩 추가하자. 클라우드 콘솔의 접근 분석기나
+      CloudTrail 로그가 "실제로 무엇을 호출했는지" 알려주므로 그것을 근거로 좁히면 된다.</p>
+    </div>
+
+    <h3>액세스 키를 만들지 않는 방향으로</h3>
+    <p>초심자가 가장 먼저 배우는 것이 액세스 키인데, <b>실무에서는 가장 피해야 할 것</b>이다.
+    만료되지 않고, 유출되면 그대로 쓰이고, 어디에 복사됐는지 추적할 수 없다.
+    대신 <b>역할</b>을 쓴다.</p>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>상황</th><th>쓸 것</th></tr></thead>
+        <tbody>
+          <tr><td>내 노트북에서 CLI</td><td>SSO 로그인 (<code>aws sso login</code>) — 단기 자격증명</td></tr>
+          <tr><td>EC2 안에서 도는 앱</td><td>인스턴스 프로파일 (역할을 인스턴스에 붙인다)</td></tr>
+          <tr><td>쿠버네티스 파드</td><td>서비스 계정 ↔ 역할 연결 (IRSA / Workload Identity)</td></tr>
+          <tr><td>GitHub Actions</td><td><b>OIDC</b> — Stage 9에서 본 그것</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>네 경우 모두 <b>영구 키가 존재하지 않는다.</b> 자격증명은 필요할 때 발급되고 몇 시간 뒤 만료된다.</p>
+
+    <h2 id="region">3. 리전과 가용영역</h2>
+    <ul>
+      <li><b>리전</b> — 지리적 위치(서울, 도쿄, 버지니아). 리전끼리는 멀고, 데이터 이동에 <b>돈이 든다.</b></li>
+      <li><b>가용영역(AZ)</b> — 한 리전 안의 물리적으로 분리된 데이터센터. 같은 리전 안이라 가깝고 빠르다.</li>
+    </ul>
+    <p>고가용성의 기본은 <b>여러 AZ에 걸치는</b> 것이다. 한 AZ에 장애가 나도 서비스가 유지된다.
+    반면 여러 리전에 걸치는 것은 훨씬 비싸고 복잡하니, 정말 필요한지 먼저 따진다.</p>
+    <p>리전을 고르는 기준은 셋이다 — <b>사용자와의 거리</b>(지연 시간), <b>법적 요구</b>(데이터 소재),
+    <b>가격</b>(리전마다 다르다). 학습용이라면 가까운 곳이 편하다.</p>
+
+    <h2 id="network">4. 네트워크 — VPC와 서브넷</h2>
+    <p>Stage 2에서 배운 CIDR과 라우팅이 여기서 그대로 쓰인다.</p>
+    <pre><code>VPC  10.0.0.0/16                         내 사설 네트워크 전체
+├─ public  10.0.1.0/24  (AZ-a)          인터넷 게이트웨이로 나가는 경로가 있다
+├─ public  10.0.2.0/24  (AZ-c)
+├─ private 10.0.11.0/24 (AZ-a)          NAT를 통해 나가기만 한다
+└─ private 10.0.12.0/24 (AZ-c)</code></pre>
+    <p>public과 private을 가르는 것은 서브넷 이름이 아니라 <b>라우팅 테이블</b>이다.
+    인터넷 게이트웨이로 가는 경로가 있으면 public, NAT 게이트웨이로만 가면 private이다.</p>
+
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>무엇을</th><th>어디에</th><th>왜</th></tr></thead>
+        <tbody>
+          <tr><td>로드밸런서</td><td>public</td><td>인터넷에서 들어와야 한다</td></tr>
+          <tr><td>애플리케이션 서버</td><td>private</td><td>LB를 통해서만 접근되면 된다</td></tr>
+          <tr><td>데이터베이스</td><td>private</td><td>인터넷에서 절대 닿으면 안 된다</td></tr>
+          <tr><td>NAT 게이트웨이</td><td>public</td><td>private이 밖으로 나가는 통로</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>보안 그룹</h3>
+    <p>Stage 2의 "클라우드에는 방화벽 층이 하나 더 있다"가 이것이다.
+    보안 그룹은 인스턴스 단위의 방화벽이고, <b>기본적으로 모든 인바운드를 막는다.</b></p>
+    <pre><code>resource "aws_security_group" "app" {
+  vpc_id = aws_vpc.main.id
+
+  ingress {
+    from_port       = 8000
+    to_port         = 8000
+    protocol        = "tcp"
+    security_groups = [aws_security_group.lb.id]   # ← IP가 아니라 다른 SG를 참조
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+}</code></pre>
+    <p><b>다른 보안 그룹을 참조하는 것</b>이 관용적인 방식이다. "로드밸런서에서 오는 트래픽만
+    허용한다"를 IP 목록 없이 표현할 수 있고, 인스턴스가 늘거나 IP가 바뀌어도 그대로 동작한다.</p>
+
+    <div class="callout warn">
+      <p class="callout-title">⚠ 0.0.0.0/0 으로 SSH를 열지 않는다</p>
+      <p>22번 포트를 전 세계에 열면 <b>몇 분 안에</b> 자동화된 접속 시도가 시작된다.
+      대안은 여럿이다 — 내 IP만 허용, VPN이나 배스천을 통한 접근, 또는 아예 SSH를 열지 않고
+      클라우드의 세션 관리 서비스(AWS Systems Manager Session Manager 등)를 쓰는 것.
+      마지막이 가장 낫다. <b>열린 포트가 없으면 뚫릴 포트도 없다.</b></p>
+    </div>
+
+    <h2 id="compute">5. 컴퓨트</h2>
+    <p>같은 애플리케이션을 돌리는 방법이 여럿이고, 아래로 갈수록 관리할 것이 적어지고
+    제약이 늘어난다.</p>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>방식</th><th>내가 관리하는 것</th><th>맞는 경우</th></tr></thead>
+        <tbody>
+          <tr><td>가상 머신 (EC2)</td><td>OS, 패치, 런타임, 배포</td><td>특수한 요구, 레거시</td></tr>
+          <tr><td>매니지드 쿠버네티스 (EKS)</td><td>워커 노드, 매니페스트</td><td>여러 서비스, 팀 규모가 있을 때</td></tr>
+          <tr><td>컨테이너 서비스 (ECS/Fargate, Cloud Run)</td><td>컨테이너 이미지만</td><td><b>대부분의 웹 서비스</b></td></tr>
+          <tr><td>서버리스 함수 (Lambda)</td><td>함수 코드만</td><td>이벤트 처리, 간헐적 실행</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="callout">
+      <p class="callout-title">💡 쿠버네티스를 배웠다고 항상 쿠버네티스는 아니다</p>
+      <p>Stage 8에서 쿠버네티스를 배웠지만, 서비스 하나를 올리는 데는 Cloud Run이나
+      Fargate가 훨씬 적은 노력으로 같은 결과를 준다. 무엇을 <b>관리하지 않아도 되는지</b>가
+      선택의 기준이다. 클러스터 운영 자체가 일이 된다는 점을 Stage 8에서도 짚었다.</p>
+    </div>
+
+    <h3>비용 절감 옵션</h3>
+    <ul>
+      <li><b>스팟/선점형 인스턴스</b> — 최대 90% 저렴하지만 <b>언제든 회수될 수 있다.</b>
+        상태 없는 워커나 배치 작업에 적합하고, DB에는 부적합하다</li>
+      <li><b>예약/약정 할인</b> — 1~3년 약정으로 30~70% 절감. 안정적인 기저 부하에</li>
+      <li><b>오토스케일링</b> — 필요할 때만 늘린다. 야간에 줄이는 것만으로도 효과가 크다</li>
+    </ul>
+
+    <h2 id="storage">6. 스토리지</h2>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>종류</th><th>성격</th><th>쓰임</th></tr></thead>
+        <tbody>
+          <tr><td>블록 (EBS)</td><td>VM에 붙는 디스크. 한 번에 하나에</td><td>OS 디스크, DB 데이터</td></tr>
+          <tr><td>오브젝트 (S3)</td><td>HTTP로 접근하는 파일. 무제한에 가깝다</td><td>이미지, 백업, 로그, 정적 사이트</td></tr>
+          <tr><td>파일 (EFS)</td><td>여러 서버가 동시에 마운트</td><td>공유 파일이 꼭 필요할 때</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>오브젝트 스토리지가 클라우드에서 가장 많이 쓰인다. 싸고, 튼튼하고, 확장 걱정이 없다.
+    수명주기 규칙으로 오래된 객체를 더 싼 등급으로 옮기거나 지우면 비용이 크게 준다.</p>
+
+    <div class="callout warn">
+      <p class="callout-title">⚠ 버킷을 공개로 열지 않는다</p>
+      <p>클라우드 데이터 유출 사고의 고전적인 원인이다. 요즘은 기본적으로 공개가 차단되어 있고
+      켜려면 여러 번 경고를 받는다 — <b>그 경고를 무시하지 말자.</b>
+      정적 파일을 공개해야 한다면 버킷을 여는 대신 CDN을 앞에 두고 CDN에만 읽기 권한을 준다.</p>
+    </div>
+
+    <h2 id="managed">7. 매니지드 서비스</h2>
+    <p>"직접 운영할 것인가, 맡길 것인가"는 클라우드에서 계속 하게 되는 판단이다.
+    데이터베이스를 예로 보자.</p>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th></th><th>직접 운영 (VM 위의 PostgreSQL)</th><th>매니지드 (RDS)</th></tr></thead>
+        <tbody>
+          <tr><td>백업</td><td>직접 구성하고 <b>복원을 검증</b>해야</td><td>자동, 시점 복구</td></tr>
+          <tr><td>패치</td><td>직접, 다운타임 계획</td><td>정해진 창에 자동</td></tr>
+          <tr><td>장애 복구</td><td>직접 대기</td><td>Multi-AZ 자동 전환</td></tr>
+          <tr><td>비용</td><td>싸 보인다</td><td>비싸 보인다</td></tr>
+          <tr><td>실제 비용</td><td><b>사람 시간 + 사고 위험</b></td><td>청구서에 다 나온다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>기본값은 <b>맡기는 것</b>이다. 데이터베이스 운영은 전문 영역이고, 새벽에 복구를 시도하는
+    비용은 청구서에 안 나올 뿐 실재한다. 직접 운영을 택하려면 그럴 만한 이유
+    (특수한 확장, 규제, 비용이 정말 압도적)가 있어야 한다.</p>
+    <div class="callout">
+      <p class="callout-title">💡 백업은 복원해 봐야 백업이다</p>
+      <p>매니지드든 아니든 마찬가지다. <b>복원을 한 번도 해보지 않은 백업은 백업이 아니라 희망이다.</b>
+      분기에 한 번은 실제로 복원해 보고, 걸린 시간을 기록하자. 그 시간이 곧 장애 시 복구 목표(RTO)다.</p>
+    </div>
+
+    <h2 id="cost">8. 비용</h2>
+    <p>클라우드 요금은 대개 네 가지에서 나온다.</p>
+    <ol>
+      <li><b>컴퓨트</b> — 켜져 있는 시간 × 크기</li>
+      <li><b>스토리지</b> — 저장된 용량 × 시간</li>
+      <li><b>네트워크</b> — <b>나가는</b> 트래픽 (들어오는 것은 대개 무료)</li>
+      <li><b>매니지드 서비스</b> — 각자의 단위 (요청 수, 처리량)</li>
+    </ol>
+    <div class="callout warn">
+      <p class="callout-title">⚠ 조용히 돈이 새는 곳들</p>
+      <ul>
+        <li><b>NAT 게이트웨이</b> — 시간당 요금 + 데이터 처리 요금. 학습용 환경에서 뜻밖에 큰 항목이다</li>
+        <li><b>리전 간 / 가용영역 간 전송</b> — 무심코 걸치면 트래픽마다 과금된다</li>
+        <li><b>붙어 있지 않은 디스크와 탄력적 IP</b> — 인스턴스를 지워도 남아 계속 과금된다</li>
+        <li><b>로그와 스냅샷</b> — 보존 기간을 안 정하면 무한히 쌓인다</li>
+        <li><b>잊고 끄지 않은 실습 자원</b> — 가장 흔하다</li>
+      </ul>
+    </div>
+
+    <h3>비용을 다루는 습관</h3>
+    <pre><code># 모든 자원에 태그를 붙인다 (Stage 10에서 이미 했다)
+tags = {
+  Environment = "dev"
+  Owner       = "학습"
+  ManagedBy   = "terraform"
+}</code></pre>
+    <p>태그가 있으면 비용 대시보드에서 <b>무엇이 얼마를 쓰는지</b> 항목별로 볼 수 있다.
+    태그가 없으면 "총액 20만원"만 보이고 어디서 나왔는지 알 수 없다.</p>
+    <ul>
+      <li><b>예산 알럿</b>을 실제 예상액의 50%, 80%, 100%에 건다</li>
+      <li>월 1회 비용 대시보드를 열어 <b>가장 큰 항목 세 개</b>를 확인한다</li>
+      <li>학습용 환경은 쓰지 않을 때 <code>terraform destroy</code></li>
+    </ul>
+
+    <h2 id="wellarch">9. 잘 만들어진 구성의 조건</h2>
+    <p>제공사마다 이름은 다르지만(AWS Well-Architected, Azure Well-Architected,
+    GCP Architecture Framework) 묻는 질문은 같다. 설계를 점검하는 체크리스트로 쓰기 좋다.</p>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>기둥</th><th>스스로 물을 것</th></tr></thead>
+        <tbody>
+          <tr><td>운영 우수성</td><td>배포와 롤백이 자동인가? 장애를 <b>사용자보다 먼저</b> 아는가?</td></tr>
+          <tr><td>보안</td><td>최소 권한인가? 저장·전송 중 암호화되나? 열린 포트가 최소인가?</td></tr>
+          <tr><td>안정성</td><td>한 AZ가 죽어도 되나? 백업을 <b>복원해 봤나</b>?</td></tr>
+          <tr><td>성능 효율</td><td>부하에 맞게 자동으로 늘고 주나?</td></tr>
+          <tr><td>비용 최적화</td><td>쓰지 않는 자원이 있나? 태그로 추적되나?</td></tr>
+          <tr><td>지속가능성</td><td>필요 이상으로 크게 잡지 않았나?</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>여기까지 오면 앞 단계들이 각 기둥에 어떻게 대응하는지 보인다 —
+    운영 우수성은 Stage 9, 안정성은 Stage 8, 보안은 Stage 14, 그리고
+    "사용자보다 먼저 안다"는 바로 다음 Stage 13이다.</p>
+
+    <h2 id="pitfalls">자주 하는 실수</h2>
+
+    <h3>예상치 못한 청구서</h3>
+    <p>가장 흔하고 가장 아픈 실수다. 원인은 대개 셋 중 하나다 —
+    실습 자원을 안 지웠거나, NAT 게이트웨이처럼 시간당 과금되는 것을 몰랐거나,
+    데이터 전송량을 계산에 안 넣었다.</p>
+    <pre><code># 지금 무엇이 켜져 있는지 확인하는 습관
+aws ec2 describe-instances --query \
+  'Reservations[].Instances[?State.Name==`running`].[InstanceId,InstanceType,Tags]'
+aws ec2 describe-addresses      # 붙어 있지 않은 탄력적 IP도 과금된다
+aws ec2 describe-volumes --filters Name=status,Values=available   # 미사용 디스크</code></pre>
+    <p>예방은 예산 알럿과 <code>terraform destroy</code>다. 콘솔에서 손으로 만든 것은
+    이 정리가 어렵다는 점도 Stage 10을 먼저 배운 이유다.</p>
+
+    <h3>AccessDenied — 무엇이 부족한지 모르겠다</h3>
+    <pre><code>An error occurred (AccessDenied) when calling the GetObject operation:
+User: arn:aws:sts::123456789012:assumed-role/app-role/i-0abc is not authorized
+to perform: s3:GetObject on resource: arn:aws:s3:::weatherboard-assets/key.txt</code></pre>
+    <p>에러 메시지가 <b>필요한 것을 그대로 말해 준다</b> — 누가(<code>assumed-role/app-role</code>),
+    무엇을(<code>s3:GetObject</code>), 어디에(그 객체). 이 세 조각을 정책에 그대로 넣으면 된다.
+    <code>*</code>로 뭉개지 말고 이 메시지를 근거로 정확히 필요한 만큼만 추가하자.</p>
+    <p>권한이 여러 층(정책, 리소스 정책, 조직 정책)에 걸쳐 있어 헷갈릴 때는
+    각 제공사의 정책 시뮬레이터/분석기를 쓴다.</p>
+
+    <h3>인스턴스에 접속이 안 된다</h3>
+    <p>Stage 2의 장애 분류가 그대로 적용된다. 순서대로 확인한다.</p>
+    <ol>
+      <li>public 서브넷인가, 공인 IP가 붙어 있는가</li>
+      <li>라우팅 테이블에 인터넷 게이트웨이 경로가 있는가</li>
+      <li>보안 그룹의 인바운드가 열려 있는가 (내 IP에서)</li>
+      <li>네트워크 ACL이 막고 있지는 않은가 (서브넷 단위, 스테이트리스)</li>
+      <li>OS 안의 방화벽은? (Stage 2에서 본 "층이 둘"이 여기선 셋이다)</li>
+    </ol>
+    <p>보안 그룹은 <b>스테이트풀</b>이라 나간 요청의 응답은 자동으로 돌아온다.
+    네트워크 ACL은 <b>스테이트리스</b>라 양방향을 다 열어야 한다 — 이 차이 때문에
+    "SG는 열었는데 안 된다"가 생긴다.</p>
+
+    <h3>DB가 인터넷에서 접근 가능하다</h3>
+    <p>"일단 되게 하려고" 공인 IP를 붙이고 <code>0.0.0.0/0</code>을 열어 둔 채 잊는 경우다.
+    데이터베이스는 <b>private 서브넷</b>에 두고, 애플리케이션의 보안 그룹에서 오는
+    트래픽만 허용한다. 관리 접속이 필요하면 배스천이나 세션 관리 서비스를 거친다.</p>
+
+    <h3>한 AZ에만 몰아넣었다</h3>
+    <p>실습으로 시작하면 자연히 서브넷 하나에 다 만들게 된다. 그 AZ에 장애가 나면
+    전부 멈춘다. 매니지드 DB의 Multi-AZ 옵션, 로드밸런서의 다중 AZ 배치는
+    <b>처음부터 켜 두는 편</b>이 나중에 옮기는 것보다 훨씬 싸다.</p>
+
+    <h2 id="exercises">직접 해보기</h2>
+
+    <h3>과제 1 — 계정 안전장치부터</h3>
+    <p>다른 무엇보다 먼저 한다. 예산 알럿을 걸고, 루트 계정에 MFA를 켜고,
+    일상 작업용 사용자(또는 SSO)를 따로 만든다.</p>
+    <p><b>검증:</b> 예산 알럿 메일이 실제로 오는지 임계값을 아주 낮게(1달러) 잡아 확인했는가.
+    루트 계정으로는 로그인하지 않고 작업할 수 있는가.</p>
+
+    <h3>과제 2 — VPC를 Terraform으로 그리기</h3>
+    <p>Stage 10의 Terraform으로 VPC 하나, public/private 서브넷 각 2개(서로 다른 AZ),
+    인터넷 게이트웨이, 라우팅 테이블을 만든다. <b>NAT 게이트웨이는 비싸니 마지막에</b>
+    필요할 때만 추가하고 바로 지운다.</p>
+    <p><b>검증:</b> <code>terraform destroy</code> 한 번으로 전부 사라지는가.
+    public과 private을 무엇이 가르는지 라우팅 테이블로 설명할 수 있는가.</p>
+
+    <h3>과제 3 — 최소 권한 정책 만들기</h3>
+    <p>S3 버킷 하나를 만들고, 그 버킷의 객체만 읽을 수 있는 정책을 붙인 역할을 만든다.
+    일부러 다른 버킷에 접근해 보고 <code>AccessDenied</code>를 확인한다.</p>
+    <p><b>검증:</b> 에러 메시지에서 주체·액션·리소스 세 조각을 짚을 수 있는가.
+    정책에 <code>*</code>가 하나도 없는가(경로 와일드카드 <code>/*</code>는 제외).</p>
+
+    <h3>과제 4 — weatherboard를 올리기</h3>
+    <p>Stage 7의 이미지를 컨테이너 레지스트리에 올리고, 컨테이너 서비스
+    (Cloud Run / App Runner / Fargate 중 하나)로 배포한다. 로드밸런서를 앞에 두고
+    <code>/healthz</code>를 헬스체크 경로로 지정한다.</p>
+    <p><b>검증:</b> 공개 URL로 응답하는가. 헬스체크가 통과 상태인가.
+    <b>다 하고 나면 반드시 지운다</b> — 지운 뒤 청구 대시보드에서 확인했는가.</p>
+
+    <h3>과제 5 — 비용 추정과 실측</h3>
+    <p>과제 4의 구성을 한 달 돌린다면 얼마인지 <b>항목별로</b> 추정한다
+    (제공사의 가격 계산기 사용). 그다음 실제로 몇 시간 돌리고 비용 대시보드의
+    숫자와 비교한다.</p>
+    <p><b>검증:</b> 추정과 실측이 얼마나 달랐는가. 빠뜨린 항목이 무엇이었는가
+    (대개 데이터 전송이나 NAT다). 가장 큰 항목 세 개를 댈 수 있는가.</p>
+
+    <h2 id="checklist">체크리스트</h2>
+    <p class="muted">브라우저에 저장된다. 끝낸 항목을 표시하며 진행하자.</p>
+    <div class="progress-bar" data-progress-for="stage-12"><i></i></div>
+    <p class="muted"><small data-progress-label></small></p>
+    <ul class="checklist" data-progress="stage-12">
+      <li><input type="checkbox" id="s12-c1"><label for="s12-c1"><b>예산 알럿을 걸었고</b> 실제로 메일이 오는 것을 확인했다 (과제 1)</label></li>
+      <li><input type="checkbox" id="s12-c2"><label for="s12-c2">루트 계정에 MFA를 켜고 일상 작업은 별도 사용자로 한다</label></li>
+      <li><input type="checkbox" id="s12-c3"><label for="s12-c3">책임 공유 모델에서 내 책임이 어디까지인지 설명할 수 있다</label></li>
+      <li><input type="checkbox" id="s12-c4"><label for="s12-c4">주체·정책·역할·리소스의 관계를 설명할 수 있다</label></li>
+      <li><input type="checkbox" id="s12-c5"><label for="s12-c5">액세스 키 대신 역할을 쓰는 네 가지 상황을 안다</label></li>
+      <li><input type="checkbox" id="s12-c6"><label for="s12-c6"><code>*</code> 없는 최소 권한 정책을 만들고 <code>AccessDenied</code>를 확인했다 (과제 3)</label></li>
+      <li><input type="checkbox" id="s12-c7"><label for="s12-c7">public과 private 서브넷을 가르는 것이 라우팅 테이블임을 안다</label></li>
+      <li><input type="checkbox" id="s12-c8"><label for="s12-c8">VPC를 Terraform으로 만들고 <code>destroy</code>로 정리했다 (과제 2)</label></li>
+      <li><input type="checkbox" id="s12-c9"><label for="s12-c9">보안 그룹에서 IP 대신 다른 보안 그룹을 참조해 봤다</label></li>
+      <li><input type="checkbox" id="s12-c10"><label for="s12-c10">보안 그룹(스테이트풀)과 네트워크 ACL(스테이트리스)의 차이를 안다</label></li>
+      <li><input type="checkbox" id="s12-c11"><label for="s12-c11">컴퓨트 네 가지 방식의 관리 부담 차이를 설명할 수 있다</label></li>
+      <li><input type="checkbox" id="s12-c12"><label for="s12-c12">DB를 직접 운영할 때와 맡길 때의 실제 비용 차이를 설명할 수 있다</label></li>
+      <li><input type="checkbox" id="s12-c13"><label for="s12-c13">모든 자원에 태그를 붙여 비용을 항목별로 봤다</label></li>
+      <li><input type="checkbox" id="s12-c14"><label for="s12-c14">조용히 돈이 새는 항목을 셋 이상 댈 수 있다</label></li>
+      <li><input type="checkbox" id="s12-c15"><label for="s12-c15">월 비용을 추정하고 실측과 비교했다 (과제 5)</label></li>
+      <li><input type="checkbox" id="s12-c16"><label for="s12-c16"><b>실습 자원을 전부 정리했고</b> 청구 대시보드에서 확인했다</label></li>
+    </ul>
+
+    <h2 id="further">더 읽을거리</h2>
+    <ul>
+      <li><a href="https://docs.aws.amazon.com/wellarchitected/latest/framework/welcome.html">AWS Well-Architected Framework</a> — 설계 점검 질문 모음</li>
+      <li><a href="https://learn.microsoft.com/ko-kr/azure/well-architected/">Azure Well-Architected Framework</a></li>
+      <li><a href="https://cloud.google.com/architecture/framework">Google Cloud Architecture Framework</a></li>
+      <li><a href="https://calculator.aws/">AWS Pricing Calculator</a> — 과제 5의 추정에</li>
+      <li><a href="https://docs.aws.amazon.com/IAM/latest/UserGuide/best-practices.html">IAM 모범 사례</a> — 최소 권한과 자격증명</li>
+      <li><a href="https://www.lastweekinaws.com/blog/">Last Week in AWS</a> — 비용과 실무 관점의 비평</li>
+    </ul>
+
+    <div class="callout ok">
+      <p class="callout-title">✓ Part 4를 마쳤다</p>
+      <p>인프라를 코드로 만들고(10), 서버를 구성하고(11), 클라우드에 올렸다(12).
+      <code>weatherboard</code>는 이제 진짜 인터넷에서 돌아간다.
+      그런데 <b>잘 돌고 있는지</b>는 어떻게 아는가? 사용자가 알려주기 전에 알 방법이 있는가?
+      마지막 Part 5가 그 질문에서 시작한다.</p>
     </div>
 
     <div class="pager">
