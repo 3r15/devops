@@ -32,14 +32,491 @@
       <p class="lead">이미지·레이어, Dockerfile 최적화, 볼륨/네트워크, Compose.</p>
       <div class="hero-meta">
         <span>예상 <b>20</b>시간</span>
-        <span><span class="badge">예정</span></span>
+        <span><span class="badge done">완료</span></span>
       </div>
     </section>
 
-    <div class="placeholder">
-      <h2>아직 작성 중입니다</h2>
-      <p>이 단계의 본문은 준비 중입니다. 학습 계획에 따라 순서대로 채워집니다.</p>
-      <p><a href="../../plan.html">전체 학습 계획 보기 →</a></p>
+    <h2 id="goals">이 단계를 끝내면</h2>
+    <ul>
+      <li>애플리케이션과 그 실행 환경을 이미지 하나로 묶어 어디서나 같게 돌릴 수 있다.</li>
+      <li>레이어와 캐시를 이해하고, 코드만 고쳤을 때 재빌드가 수 초에 끝나게 만들 수 있다.</li>
+      <li>멀티스테이지 빌드로 이미지 크기를 줄일 수 있다.</li>
+      <li>볼륨과 네트워크를 구분해 쓰고, 컨테이너가 사라져도 데이터를 지킬 수 있다.</li>
+      <li>Compose로 여러 컨테이너를 한 번에 띄운다 — <code>weatherboard</code> + Nginx.</li>
+    </ul>
+
+    <h2 id="prereq">준비물</h2>
+    <ul>
+      <li>Stage 5의 <code>weatherboard</code>와 Stage 6의 Nginx 설정.</li>
+      <li>Docker Engine.</li>
+    </ul>
+    <pre><code># 공식 설치 스크립트 (Ubuntu/Debian)
+curl -fsSL https://get.docker.com | sudo sh
+sudo usermod -aG docker "$USER"     # 로그아웃 후 다시 로그인해야 적용된다
+docker version
+docker run --rm hello-world</code></pre>
+    <div class="callout warn">
+      <p class="callout-title">⚠ docker 그룹은 사실상 root 권한이다</p>
+      <p><code>docker</code> 그룹에 들어간 사용자는 호스트의 <code>/</code>를 컨테이너에 마운트해
+      무엇이든 할 수 있다. 즉 <b>sudo 없이 root가 되는 길</b>이다. 개인 실습 서버에서는 편하지만,
+      여러 사람이 쓰는 서버에서 아무에게나 주면 안 된다. Stage 14에서 rootless 모드를 다룬다.</p>
+    </div>
+
+    <nav class="toc">
+      <p>목차</p>
+      <ol>
+        <li><a href="#why">컨테이너가 푸는 문제</a></li>
+        <li><a href="#run">이미지와 컨테이너 다루기</a></li>
+        <li><a href="#layers">레이어와 캐시</a></li>
+        <li><a href="#dockerfile">Dockerfile 쓰기</a></li>
+        <li><a href="#multistage">멀티스테이지 빌드</a></li>
+        <li><a href="#data">볼륨 — 데이터를 지키기</a></li>
+        <li><a href="#network">네트워크</a></li>
+        <li><a href="#compose">Compose</a></li>
+        <li><a href="#debug">컨테이너 디버깅</a></li>
+      </ol>
+    </nav>
+
+    <h2 id="why">1. 컨테이너가 푸는 문제</h2>
+    <p>Stage 6까지 <code>weatherboard</code>는 서버 한 대에 <b>손으로</b> 설치되어 있다.
+    파이썬 버전, 가상환경, requirements, systemd 유닛, Nginx 설정. 다른 서버에 올리려면
+    이걸 전부 다시 한다. 그리고 한 단계라도 다르면 "제 컴퓨터에선 되는데요"가 시작된다.</p>
+    <p>컨테이너는 <b>애플리케이션과 그것이 필요로 하는 모든 것</b>을 하나의 이미지로 묶는다.
+    그 이미지는 내 노트북에서든 CI에서든 프로덕션에서든 같은 파일이다.</p>
+
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th></th><th>가상 머신</th><th>컨테이너</th></tr></thead>
+        <tbody>
+          <tr><td>격리 대상</td><td>하드웨어부터</td><td>프로세스와 파일시스템</td></tr>
+          <tr><td>커널</td><td>각자 따로</td><td><b>호스트 커널을 공유</b></td></tr>
+          <tr><td>시작 시간</td><td>수십 초</td><td>수십 밀리초</td></tr>
+          <tr><td>크기</td><td>GB</td><td>수십~수백 MB</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>커널을 공유한다는 점이 핵심이다. 가볍고 빠른 이유이자, <b>VM만큼 강한 격리는 아니라는</b>
+    한계이기도 하다. 리눅스 컨테이너는 리눅스에서만 돈다(맥/윈도우의 Docker는 내부에 작은
+    리눅스 VM을 띄운다).</p>
+
+    <h2 id="run">2. 이미지와 컨테이너 다루기</h2>
+    <p><b>이미지는 설계도, 컨테이너는 그것을 실행한 인스턴스</b>다. 같은 이미지로 컨테이너를
+    여러 개 띄울 수 있다.</p>
+    <pre><code>docker run -d --name web -p 8080:80 nginx:1.27-alpine
+#          ^  ^            ^         ^
+#          |  |            |         이미지:태그
+#          |  |            호스트:8080 → 컨테이너:80
+#          |  이름을 붙인다
+#          배경 실행
+
+docker ps                 # 도는 컨테이너
+docker ps -a              # 멈춘 것까지
+docker logs -f web        # 로그 따라가기
+docker exec -it web sh    # 안으로 들어가기
+docker stop web &amp;&amp; docker rm web</code></pre>
+
+    <div class="callout warn">
+      <p class="callout-title">⚠ latest 태그를 쓰지 않는다</p>
+      <p><code>nginx:latest</code>는 "지금 최신"이라는 <b>움직이는 이름표</b>다. 어제 빌드한 이미지와
+      오늘 빌드한 이미지가 조용히 달라져서, 재현이 불가능해지고 원인 모를 장애가 난다.
+      <code>nginx:1.27-alpine</code>처럼 버전을 고정하자. 프로덕션이라면 다이제스트
+      (<code>nginx@sha256:...</code>)까지 고정하는 것이 가장 안전하다.</p>
+    </div>
+
+    <pre><code>docker images                 # 로컬 이미지 목록
+docker pull python:3.12-slim
+docker rmi &lt;이미지&gt;
+docker system df              # 디스크를 얼마나 쓰고 있나
+docker system prune -a        # 안 쓰는 이미지/컨테이너/네트워크 정리 (주의)</code></pre>
+    <p>Stage 1의 "디스크가 찼다"가 도커 쓰는 서버에서는 대개 여기다.
+    <code>docker system df</code>가 첫 확인 지점이다.</p>
+
+    <h2 id="layers">3. 레이어와 캐시</h2>
+    <p>이미지는 레이어의 스택이다. Dockerfile의 각 명령이 레이어 하나를 만들고,
+    <b>내용이 바뀌지 않은 레이어는 캐시에서 재사용</b>된다. 이 규칙 하나가 빌드 속도를 좌우한다.</p>
+
+    <pre><code># 나쁜 순서 — 코드 한 줄만 고쳐도 pip install을 다시 한다
+COPY . /app
+RUN pip install -r /app/requirements.txt
+
+# 좋은 순서 — 의존성이 안 바뀌면 pip install은 캐시된다
+COPY requirements.txt /app/
+RUN pip install -r /app/requirements.txt
+COPY . /app</code></pre>
+    <p>규칙은 <b>자주 바뀌는 것을 뒤로</b>다. 의존성 목록은 가끔 바뀌고 소스는 매번 바뀌니,
+    의존성 설치를 먼저 두면 대부분의 빌드에서 그 레이어를 건너뛴다.
+    한 레이어가 무효화되면 <b>그 아래 전부</b>가 다시 실행된다는 점을 기억하자.</p>
+
+    <pre><code>docker history &lt;이미지&gt;      # 레이어별 크기 — 무엇이 이미지를 키웠나</code></pre>
+
+    <div class="callout">
+      <p class="callout-title">💡 지운 파일은 사라지지 않는다</p>
+      <p>레이어는 쌓이기만 한다. 한 레이어에서 만든 파일을 다음 레이어에서 <code>rm</code>해도
+      앞 레이어에는 그대로 남아 이미지 크기에 포함된다. 그래서 정리는 <b>같은 <code>RUN</code> 안에서</b> 한다.</p>
+      <pre><code>RUN apt-get update &amp;&amp; apt-get install -y --no-install-recommends curl \
+    &amp;&amp; rm -rf /var/lib/apt/lists/*</code></pre>
+      <p>비밀도 마찬가지다. 빌드 중 <code>COPY</code>한 키를 나중에 지워도 <b>이미지 안에 남는다.</b>
+      Stage 3의 "커밋한 비밀은 이력에 남는다"와 같은 함정이다.</p>
+    </div>
+
+    <h2 id="dockerfile">4. Dockerfile 쓰기</h2>
+    <p><code>weatherboard</code>의 첫 Dockerfile이다.</p>
+    <pre><code># weatherboard/Dockerfile
+FROM python:3.12-slim
+
+WORKDIR /app
+
+# 의존성 먼저 — 캐시가 잘 듣도록
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# 그다음 소스
+COPY weatherboard/ ./weatherboard/
+
+# root로 돌지 않는다
+RUN useradd --create-home --uid 10001 app
+USER app
+
+ENV HOST=0.0.0.0 PORT=8000
+EXPOSE 8000
+
+CMD ["python", "-m", "weatherboard.app"]</code></pre>
+
+    <p><code>HOST=0.0.0.0</code>이 여기서 필요한 이유가 Stage 2·5·6에서 쌓아 온 것이다.
+    컨테이너 안에서 <code>127.0.0.1</code>에 바인딩하면 <b>그 컨테이너 안에서만</b> 접근 가능하고,
+    포트 매핑으로도 밖에서 닿지 않는다. 컨테이너는 이미 격리되어 있으므로
+    <code>0.0.0.0</code>이 맞다.</p>
+
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>명령</th><th>하는 일</th><th>주의</th></tr></thead>
+        <tbody>
+          <tr><td><code>FROM</code></td><td>기반 이미지</td><td>버전을 고정한다</td></tr>
+          <tr><td><code>WORKDIR</code></td><td>작업 디렉터리 (없으면 생성)</td><td><code>RUN cd</code>는 다음 줄에 이어지지 않는다</td></tr>
+          <tr><td><code>COPY</code></td><td>호스트 → 이미지</td><td><code>ADD</code>는 URL·압축 해제까지 해서 예측이 어렵다. <code>COPY</code>를 쓴다</td></tr>
+          <tr><td><code>RUN</code></td><td>빌드 시점에 실행</td><td>레이어가 하나 생긴다</td></tr>
+          <tr><td><code>ENV</code></td><td>환경변수</td><td>이미지에 박힌다 — 비밀은 넣지 않는다</td></tr>
+          <tr><td><code>EXPOSE</code></td><td>문서용 표시</td><td><b>포트를 열지 않는다.</b> 여는 건 <code>-p</code></td></tr>
+          <tr><td><code>CMD</code></td><td>기본 실행 명령</td><td><code>docker run</code> 뒤 인자로 덮인다</td></tr>
+          <tr><td><code>ENTRYPOINT</code></td><td>항상 실행되는 부분</td><td><code>CMD</code>가 그 인자가 된다</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>.dockerignore</h3>
+    <pre><code># weatherboard/.dockerignore
+.git
+.venv
+__pycache__
+*.pyc
+tests/
+.env
+README.md</code></pre>
+    <p><code>COPY . .</code>는 이 목록을 뺀 나머지를 넣는다. <code>.venv</code>를 빼는 것만으로도
+    이미지가 수백 MB 줄고 빌드가 빨라진다. <code>.git</code>과 <code>.env</code>는
+    <b>보안상</b> 반드시 뺀다.</p>
+
+    <pre><code>docker build -t weatherboard:0.1 .
+docker run --rm -p 8000:8000 weatherboard:0.1
+curl localhost:8000/healthz</code></pre>
+
+    <h3>헬스체크</h3>
+    <pre><code>HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+  CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz')" || exit 1</code></pre>
+    <p>Stage 5에서 만든 <code>/healthz</code>가 처음으로 쓰이는 곳이다.
+    <code>docker ps</code>의 STATUS에 <code>(healthy)</code>가 표시된다.
+    Stage 8의 쿠버네티스 프로브가 같은 경로를 다시 쓴다.</p>
+
+    <h2 id="multistage">5. 멀티스테이지 빌드</h2>
+    <p>빌드에 필요한 것(컴파일러, 개발 헤더)과 실행에 필요한 것은 다르다.
+    멀티스테이지는 <b>빌드 결과물만</b> 최종 이미지로 옮긴다.</p>
+    <pre><code>FROM python:3.12-slim AS builder
+
+WORKDIR /app
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+
+FROM python:3.12-slim
+
+RUN useradd --create-home --uid 10001 app
+COPY --from=builder /opt/venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH" HOST=0.0.0.0 PORT=8000
+
+WORKDIR /app
+COPY weatherboard/ ./weatherboard/
+USER app
+EXPOSE 8000
+CMD ["python", "-m", "weatherboard.app"]</code></pre>
+    <p>빌드 도구가 최종 이미지에 남지 않는다. 이미지가 작아지는 것도 이득이지만,
+    <b>공격 표면이 줄어드는 것</b>이 더 큰 이득이다 — 컴파일러가 없는 이미지에서는
+    침입자가 할 수 있는 일이 적다. Stage 14에서 이 이야기를 이어간다.</p>
+
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>기반 이미지</th><th>대략 크기</th><th>특징</th></tr></thead>
+        <tbody>
+          <tr><td><code>python:3.12</code></td><td>~1GB</td><td>빌드 도구 포함. 개발용</td></tr>
+          <tr><td><code>python:3.12-slim</code></td><td>~150MB</td><td>대부분의 경우 적당한 선택</td></tr>
+          <tr><td><code>python:3.12-alpine</code></td><td>~60MB</td><td>musl libc — C 확장 패키지가 빌드에 실패하기도 한다</td></tr>
+          <tr><td><code>gcr.io/distroless/python3</code></td><td>~50MB</td><td>셸조차 없다. 가장 안전하지만 디버깅이 어렵다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="callout warn">
+      <p class="callout-title">⚠ alpine이 항상 작고 빠른 것은 아니다</p>
+      <p>alpine은 musl libc를 쓴다. 파이썬 패키지 중 미리 빌드된 wheel이 glibc용만 있는 경우가 많아,
+      alpine에서는 <b>소스에서 컴파일</b>하느라 빌드가 몇 배 느려지고 이미지도 커질 수 있다.
+      크기를 재보지 않고 alpine부터 고르지 말자. <code>slim</code>으로 시작하는 편이 무난하다.</p>
+    </div>
+
+    <h2 id="data">6. 볼륨 — 데이터를 지키기</h2>
+    <p>컨테이너의 파일시스템은 <b>컨테이너와 함께 사라진다.</b> 남아야 하는 데이터는
+    밖에 둬야 한다.</p>
+    <pre><code># 이름 있는 볼륨 — Docker가 관리한다. DB 데이터에 적합
+docker volume create pgdata
+docker run -d --name db -v pgdata:/var/lib/postgresql/data postgres:16
+
+# 바인드 마운트 — 호스트의 특정 경로. 설정 파일이나 개발 중 소스에 적합
+docker run --rm -v "$PWD/nginx.conf:/etc/nginx/nginx.conf:ro" nginx:1.27-alpine
+
+docker volume ls
+docker volume inspect pgdata</code></pre>
+    <p><code>:ro</code>는 읽기 전용이다. 설정 파일을 넣을 때는 붙이는 습관을 들이자 —
+    컨테이너가 호스트 파일을 고치는 사고를 막는다.</p>
+    <div class="callout">
+      <p class="callout-title">💡 어느 쪽을 쓰나</p>
+      <p><b>이름 있는 볼륨</b>은 데이터가 목적일 때(DB, 업로드 파일). Docker가 위치를 관리하고
+      백업 도구와도 잘 맞는다. <b>바인드 마운트</b>는 호스트의 특정 파일이 목적일 때
+      (설정 주입, 개발 중 소스 실시간 반영). 프로덕션에서 바인드 마운트를 쓰면
+      호스트 경로에 의존하게 되어 이식성이 떨어진다.</p>
+    </div>
+
+    <h2 id="network">7. 네트워크</h2>
+    <pre><code>docker network create wb-net
+docker run -d --name api --network wb-net weatherboard:0.1
+docker run --rm --network wb-net curlimages/curl:8.10.1 curl -s http://api:8000/healthz</code></pre>
+    <p>같은 사용자 정의 네트워크에 있는 컨테이너는 <b>이름으로 서로를 찾는다.</b>
+    Docker가 내부 DNS를 제공하기 때문이다. IP를 알 필요가 없고, 컨테이너가 재시작되어
+    IP가 바뀌어도 상관없다. Stage 8의 Service가 하는 일이 정확히 이것의 확장판이다.</p>
+
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>드라이버</th><th>동작</th></tr></thead>
+        <tbody>
+          <tr><td><code>bridge</code> (기본)</td><td>격리된 사설 네트워크. 이름 해석 제공</td></tr>
+          <tr><td><code>host</code></td><td>호스트 네트워크를 그대로 씀. 격리 없음, 포트 매핑 불필요</td></tr>
+          <tr><td><code>none</code></td><td>네트워크 없음</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>기본 <code>bridge</code> 네트워크(<code>docker run</code>에 <code>--network</code>를 안 줬을 때)에서는
+    <b>이름 해석이 되지 않는다.</b> 컨테이너끼리 통신해야 한다면 반드시 네트워크를 만들어 붙이자.</p>
+
+    <h2 id="compose">8. Compose</h2>
+    <p>컨테이너가 둘 이상이 되면 <code>docker run</code> 명령이 길어지고 기억할 수 없게 된다.
+    Compose는 그것을 파일로 적는다.</p>
+    <pre><code># compose.yaml
+services:
+  app:
+    build: .
+    environment:
+      HOST: 0.0.0.0
+      PORT: "8000"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz')"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+
+  proxy:
+    image: nginx:1.27-alpine
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/weatherboard.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      app:
+        condition: service_healthy
+    restart: unless-stopped</code></pre>
+    <p>Nginx 설정은 Stage 6의 것을 거의 그대로 쓰되, <code>proxy_pass</code>의 대상만
+    컨테이너 이름으로 바꾼다.</p>
+    <pre><code># nginx/weatherboard.conf
+server {
+    listen 80;
+    location / {
+        proxy_pass http://app:8000;      # ← 서비스 이름으로 찾는다
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+    location /healthz {
+        proxy_pass http://app:8000/healthz;
+        access_log off;
+    }
+}</code></pre>
+    <pre><code>docker compose up -d --build
+docker compose ps
+docker compose logs -f app
+curl localhost/healthz
+docker compose down            # 컨테이너와 네트워크 제거 (볼륨은 남는다)
+docker compose down -v         # 볼륨까지 제거</code></pre>
+    <div class="callout">
+      <p class="callout-title">💡 depends_on만으로는 부족하다</p>
+      <p><code>depends_on</code>은 기본적으로 "컨테이너가 <b>시작</b>됐는가"만 본다.
+      DB가 뜨는 데 10초 걸리는데 앱이 즉시 붙으려 하면 실패한다.
+      위처럼 <code>condition: service_healthy</code>와 <code>healthcheck</code>를 함께 써야
+      "<b>준비</b>됐는가"를 기다린다. 그래도 애플리케이션은 재시도 로직을 갖는 게 맞다 —
+      Stage 8에서는 재시작이 일상이 된다.</p>
+    </div>
+
+    <h2 id="debug">9. 컨테이너 디버깅</h2>
+    <pre><code>docker logs --tail 50 -f &lt;컨테이너&gt;      # 첫 번째 확인 지점
+docker exec -it &lt;컨테이너&gt; sh            # 안에서 둘러보기
+docker inspect &lt;컨테이너&gt;                 # 설정 전체 (마운트, 네트워크, 환경변수)
+docker stats                              # 실시간 CPU/메모리
+docker top &lt;컨테이너&gt;                     # 안에서 도는 프로세스</code></pre>
+
+    <p>컨테이너가 즉시 죽어서 <code>exec</code>가 안 될 때는 이렇게 한다.</p>
+    <pre><code>docker run --rm -it --entrypoint sh weatherboard:0.1   # CMD를 무시하고 셸로 진입
+docker logs &lt;죽은-컨테이너-ID&gt;                          # 죽은 것도 로그는 남아 있다</code></pre>
+
+    <div class="callout">
+      <p class="callout-title">💡 로그는 stdout/stderr로 낸다</p>
+      <p>컨테이너 안에서 파일로 로그를 쓰면 <code>docker logs</code>에 안 보이고,
+      컨테이너가 사라질 때 함께 사라진다. Stage 4·5에서 정한 "stdout은 결과, stderr는 말"이
+      여기서 구조적 요구사항이 된다. Stage 13의 로그 수집도 이 전제 위에 선다.</p>
+    </div>
+
+    <h2 id="pitfalls">자주 하는 실수</h2>
+
+    <h3>포트를 매핑했는데 접속이 안 된다</h3>
+    <pre><code>docker run -d -p 8000:8000 weatherboard:0.1
+curl localhost:8000
+# curl: (56) Recv failure: Connection reset by peer</code></pre>
+    <p>컨테이너 안에서 애플리케이션이 <code>127.0.0.1</code>에 바인딩된 것이다.
+    Stage 2에서 본 문제가 컨테이너 안에서 반복된다 — 컨테이너의 <code>127.0.0.1</code>은
+    <b>그 컨테이너 자신</b>일 뿐이라 포트 매핑이 닿지 못한다.</p>
+    <pre><code>docker exec &lt;컨테이너&gt; ss -lntp     # 안에서 확인 (ss가 없으면 로그의 listening 줄을 본다)
+# LISTEN 127.0.0.1:8000   ← 이러면 밖에서 절대 안 된다</code></pre>
+    <p>애플리케이션이 <code>0.0.0.0</code>에 바인딩하도록 <code>HOST</code>를 준다.</p>
+
+    <h3>코드를 고쳤는데 컨테이너에 반영되지 않는다</h3>
+    <p>이미지는 빌드 시점의 <b>스냅샷</b>이다. 호스트의 파일을 고쳐도 이미 만들어진 이미지는
+    바뀌지 않는다. 다시 빌드해야 한다.</p>
+    <pre><code>docker compose up -d --build      # 빌드 후 재생성
+docker build --no-cache -t app .  # 캐시를 완전히 무시하고 (원인을 모를 때)</code></pre>
+    <p>개발 중이라면 소스를 바인드 마운트해 매번 빌드하지 않을 수 있다.
+    다만 그건 <b>개발 전용</b>이고, 배포 이미지는 반드시 소스를 <code>COPY</code>로 담아야 한다.</p>
+
+    <h3>Permission denied — 볼륨 안의 파일에</h3>
+    <pre><code>docker run -v "$PWD/data:/data" -u 10001 myapp
+# PermissionError: [Errno 13] Permission denied: '/data/out.txt'</code></pre>
+    <p>바인드 마운트한 호스트 디렉터리의 소유자 UID와 컨테이너 안 사용자의 UID가 다른 것이다.
+    컨테이너는 이름이 아니라 <b>숫자 UID</b>로 권한을 판단한다. 호스트 쪽 소유권을 맞춘다.</p>
+    <pre><code>sudo chown -R 10001:10001 ./data</code></pre>
+
+    <h3>이미지가 너무 크다</h3>
+    <pre><code>docker images weatherboard
+# weatherboard  0.1  a1b2c3  1.2GB      ← 파이썬 앱치고 너무 크다
+
+docker history weatherboard:0.1     # 어느 레이어가 범인인가</code></pre>
+    <p>흔한 원인 셋이다. <code>.dockerignore</code>가 없어 <code>.venv</code>와 <code>.git</code>이
+    통째로 들어갔거나, <code>slim</code>이 아닌 기반 이미지를 썼거나, <code>apt-get install</code> 후
+    캐시를 지우지 않은 것이다.</p>
+
+    <h3>디스크가 가득 찼다</h3>
+    <pre><code>docker system df
+# TYPE          TOTAL   ACTIVE  SIZE     RECLAIMABLE
+# Images        47      3       28.4GB   26.1GB (91%)
+# Build Cache   312     0       9.8GB    9.8GB</code></pre>
+    <p>빌드를 반복하면 중간 이미지와 캐시가 쌓인다. Stage 1의 "디스크가 찼다"가
+    도커 서버에서 나타나는 형태다.</p>
+    <pre><code>docker system prune              # 안 쓰는 컨테이너/네트워크/dangling 이미지
+docker system prune -a --volumes # 전부 (볼륨까지 — 데이터가 사라진다. 확인하고 쓸 것)
+docker builder prune             # 빌드 캐시만</code></pre>
+
+    <h2 id="exercises">직접 해보기</h2>
+
+    <h3>과제 1 — weatherboard 컨테이너화</h3>
+    <p>Dockerfile과 <code>.dockerignore</code>를 쓰고 이미지를 만든다. root로 돌지 않게 하고
+    <code>HEALTHCHECK</code>를 넣는다.</p>
+    <p><b>검증:</b> <code>docker run --rm -p 8000:8000</code> 후 <code>/healthz</code>가 응답하는가.
+    <code>docker exec &lt;c&gt; id</code>가 root가 아닌가. <code>docker ps</code>의 STATUS에
+    <code>(healthy)</code>가 뜨는가.</p>
+
+    <h3>과제 2 — 캐시를 눈으로 확인하기</h3>
+    <p>이 과제가 이 단계의 핵심이다. Dockerfile을 두 버전으로 만든다 —
+    <code>COPY . .</code>를 먼저 하는 것과, <code>requirements.txt</code>를 먼저 하는 것.
+    각각에서 <b>소스 한 줄만</b> 고치고 재빌드하며 시간을 잰다.</p>
+    <pre><code>time docker build -t wb:bad -f Dockerfile.bad .
+echo "# touch" &gt;&gt; weatherboard/app.py
+time docker build -t wb:bad -f Dockerfile.bad .     # 두 번째 빌드</code></pre>
+    <p><b>검증:</b> 좋은 순서 쪽 재빌드에서 <code>CACHED</code> 표시가 나오고 시간이 확연히
+    짧은가. 몇 배 차이인가.</p>
+
+    <h3>과제 3 — 이미지 줄이기</h3>
+    <p>과제 1의 이미지를 멀티스테이지로 바꾸고 크기를 비교한다.
+    <code>docker history</code>로 어느 레이어가 컸는지 확인한다.</p>
+    <p><b>검증:</b> 최종 이미지가 <b>200MB 이하</b>인가. 줄어든 이유를 레이어별로 설명할 수 있는가.
+    이미지 안에 <code>pip</code>이나 컴파일러가 남아 있지 않은지 확인했는가.</p>
+
+    <h3>과제 4 — Compose로 Nginx와 함께 띄우기</h3>
+    <p>Stage 6의 Nginx 설정을 컨테이너 이름 기반으로 바꿔 Compose로 묶는다.
+    앱 컨테이너는 포트를 <b>밖으로 열지 않고</b>, Nginx만 80을 연다.</p>
+    <p><b>검증:</b> <code>curl localhost/</code>는 되고 <code>curl localhost:8000/</code>은
+    안 되는가. <code>docker compose down &amp;&amp; up -d</code> 후에도 그대로 동작하는가.</p>
+
+    <h3>과제 5 — 데이터가 살아남는지 확인</h3>
+    <p>이름 있는 볼륨을 붙인 컨테이너에서 파일을 만들고, 컨테이너를 <code>rm</code>한 뒤
+    새 컨테이너에서 그 파일이 있는지 본다. 볼륨 없이 같은 실험을 반복해 차이를 확인한다.</p>
+    <p><b>검증:</b> 볼륨을 붙였을 때만 파일이 남는가. <code>docker compose down</code>과
+    <code>down -v</code>의 차이를 직접 확인했는가.</p>
+
+    <h2 id="checklist">체크리스트</h2>
+    <p class="muted">브라우저에 저장된다. 끝낸 항목을 표시하며 진행하자.</p>
+    <div class="progress-bar" data-progress-for="stage-07"><i></i></div>
+    <p class="muted"><small data-progress-label></small></p>
+    <ul class="checklist" data-progress="stage-07">
+      <li><input type="checkbox" id="s07-c1"><label for="s07-c1">이미지와 컨테이너의 차이를 설명할 수 있다</label></li>
+      <li><input type="checkbox" id="s07-c2"><label for="s07-c2">컨테이너가 VM과 다른 점(커널 공유)과 그 한계를 안다</label></li>
+      <li><input type="checkbox" id="s07-c3"><label for="s07-c3"><code>latest</code> 태그를 쓰지 않는 이유를 말할 수 있다</label></li>
+      <li><input type="checkbox" id="s07-c4"><label for="s07-c4">Dockerfile을 쓰고 이미지를 빌드했다 (과제 1)</label></li>
+      <li><input type="checkbox" id="s07-c5"><label for="s07-c5">컨테이너가 root가 아닌 사용자로 도는 것을 <code>id</code>로 확인했다</label></li>
+      <li><input type="checkbox" id="s07-c6"><label for="s07-c6"><code>.dockerignore</code>로 <code>.venv</code>·<code>.git</code>·<code>.env</code>를 제외했다</label></li>
+      <li><input type="checkbox" id="s07-c7"><label for="s07-c7">레이어 순서를 바꿔 캐시 효과를 시간으로 측정했다 (과제 2)</label></li>
+      <li><input type="checkbox" id="s07-c8"><label for="s07-c8">지운 파일이 앞 레이어에 남는다는 것과, 비밀을 빌드에 넣으면 안 되는 이유를 안다</label></li>
+      <li><input type="checkbox" id="s07-c9"><label for="s07-c9">멀티스테이지로 이미지를 200MB 이하로 줄였다 (과제 3)</label></li>
+      <li><input type="checkbox" id="s07-c10"><label for="s07-c10"><code>HEALTHCHECK</code>를 넣고 <code>(healthy)</code>를 확인했다</label></li>
+      <li><input type="checkbox" id="s07-c11"><label for="s07-c11">컨테이너 안에서 <code>127.0.0.1</code>에 바인딩하면 왜 안 되는지 설명할 수 있다</label></li>
+      <li><input type="checkbox" id="s07-c12"><label for="s07-c12">사용자 정의 네트워크에서 컨테이너 이름으로 통신했다</label></li>
+      <li><input type="checkbox" id="s07-c13"><label for="s07-c13">Compose로 앱과 Nginx를 함께 띄우고 앱 포트는 닫아 뒀다 (과제 4)</label></li>
+      <li><input type="checkbox" id="s07-c14"><label for="s07-c14">볼륨 유무에 따라 데이터가 남고 사라지는 것을 확인했다 (과제 5)</label></li>
+      <li><input type="checkbox" id="s07-c15"><label for="s07-c15"><code>docker system df</code>와 <code>prune</code>으로 디스크를 관리해 봤다</label></li>
+    </ul>
+
+    <h2 id="further">더 읽을거리</h2>
+    <ul>
+      <li><a href="https://docs.docker.com/reference/dockerfile/">Dockerfile reference</a> — 명령별 공식 문서</li>
+      <li><a href="https://docs.docker.com/build/building/best-practices/">Building best practices</a> — 레이어와 캐시 전략</li>
+      <li><a href="https://docs.docker.com/compose/compose-file/">Compose file reference</a> — Compose 문법 전체</li>
+      <li><a href="https://docs.docker.com/engine/storage/volumes/">Volumes</a> — 볼륨과 바인드 마운트</li>
+      <li><a href="https://docs.docker.com/engine/network/">Networking overview</a> — 드라이버와 이름 해석</li>
+      <li><a href="https://github.com/GoogleContainerTools/distroless">distroless 이미지</a> — 최소 이미지가 필요할 때</li>
+    </ul>
+
+    <div class="callout ok">
+      <p class="callout-title">✓ 다음 단계로 가기 전에</p>
+      <p>이제 <code>weatherboard</code>는 어디서나 같게 도는 이미지가 됐다. 하지만 아직 서버 한 대다 —
+      그 서버가 죽으면 서비스도 죽고, 트래픽이 늘어도 손으로 컨테이너를 더 띄워야 한다.
+      Stage 8에서 그 일을 시스템에 맡긴다. Compose에서 쓴 <code>healthcheck</code>와
+      서비스 이름 통신이 그대로 프로브와 Service가 된다.</p>
     </div>
 
     <div class="pager">
