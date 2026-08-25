@@ -32,14 +32,477 @@
       <p class="lead">인벤토리, 플레이북, 롤, 멱등성, 시크릿(vault).</p>
       <div class="hero-meta">
         <span>예상 <b>14</b>시간</span>
-        <span><span class="badge">예정</span></span>
+        <span><span class="badge done">완료</span></span>
       </div>
     </section>
 
-    <div class="placeholder">
-      <h2>아직 작성 중입니다</h2>
-      <p>이 단계의 본문은 준비 중입니다. 학습 계획에 따라 순서대로 채워집니다.</p>
-      <p><a href="../../plan.html">전체 학습 계획 보기 →</a></p>
+    <h2 id="goals">이 단계를 끝내면</h2>
+    <ul>
+      <li>빈 서버를 애플리케이션이 도는 상태로 만드는 과정을 코드로 적을 수 있다.</li>
+      <li>같은 플레이북을 몇 번 돌려도 결과가 같게(멱등) 만들 수 있다.</li>
+      <li>Terraform과 Ansible의 경계를 구분해 쓸 수 있다.</li>
+      <li>환경별 차이를 변수와 템플릿으로 처리할 수 있다.</li>
+      <li>비밀을 저장소에 넣지 않고 플레이북에 전달할 수 있다.</li>
+    </ul>
+
+    <h2 id="prereq">준비물</h2>
+    <ul>
+      <li>Ansible을 돌릴 머신(제어 노드) 하나. 파이썬만 있으면 된다.</li>
+      <li>대상 서버 하나 이상. 없으면 <code>localhost</code>나 Stage 7의 컨테이너로 연습한다.</li>
+      <li>Stage 1에서 만든 SSH 키 인증. Ansible은 SSH로 동작한다.</li>
+    </ul>
+    <pre><code>python3 -m venv ~/.venvs/ansible &amp;&amp; source ~/.venvs/ansible/bin/activate
+pip install ansible-core ansible-lint
+ansible --version</code></pre>
+    <div class="callout">
+      <p class="callout-title">💡 에이전트가 없다는 것</p>
+      <p>Ansible은 대상 서버에 아무것도 설치하지 않는다. SSH로 접속해 파이썬 모듈을 보내
+      실행하고 결과를 받아 온 뒤 지운다. 그래서 "관리 대상"으로 만들기 위한 준비가 없다 —
+      <b>SSH로 들어갈 수 있으면 그것으로 끝</b>이다. 이 단순함이 Ansible이 널리 쓰이는 이유다.</p>
+    </div>
+
+    <nav class="toc">
+      <p>목차</p>
+      <ol>
+        <li><a href="#boundary">Terraform과의 경계</a></li>
+        <li><a href="#inventory">인벤토리</a></li>
+        <li><a href="#adhoc">애드혹 명령</a></li>
+        <li><a href="#playbook">플레이북</a></li>
+        <li><a href="#idempotent">멱등성 — 이 단계의 핵심</a></li>
+        <li><a href="#vars">변수와 템플릿</a></li>
+        <li><a href="#handlers">핸들러</a></li>
+        <li><a href="#roles">롤</a></li>
+        <li><a href="#vault">Vault — 비밀 다루기</a></li>
+      </ol>
+    </nav>
+
+    <h2 id="boundary">1. Terraform과의 경계</h2>
+    <p>Stage 10을 마치면 자연스럽게 드는 질문이다. 둘 다 "인프라를 코드로" 아닌가?
+    경계는 이렇다.</p>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th></th><th>Terraform</th><th>Ansible</th></tr></thead>
+        <tbody>
+          <tr><td>다루는 것</td><td>자원을 <b>만든다</b> (VM, 네트워크, DB)</td><td>서버 <b>안</b>을 설정한다 (패키지, 파일, 서비스)</td></tr>
+          <tr><td>대상</td><td>클라우드 API</td><td>SSH로 접속한 OS</td></tr>
+          <tr><td>상태 추적</td><td>state 파일</td><td><b>없음</b> — 매번 현재를 확인한다</td></tr>
+          <tr><td>비유</td><td>집을 짓는다</td><td>집 안에 가구를 놓는다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>흔한 조합은 <b>Terraform으로 서버를 만들고, Ansible로 그 안을 채우는</b> 것이다.
+    Ansible로 클라우드 자원을 만들 수도 있고 Terraform에서 스크립트를 실행할 수도 있지만,
+    각자 잘하는 쪽에 두는 편이 낫다.</p>
+    <div class="callout">
+      <p class="callout-title">💡 컨테이너를 쓰면 Ansible이 덜 필요해진다</p>
+      <p>Stage 7에서 본 대로, 컨테이너 이미지 자체가 "무엇이 설치되어 있는가"를 고정한다.
+      그래서 쿠버네티스 위주의 환경에서는 Ansible의 역할이 줄어든다.
+      다만 <b>클러스터 자체를 만드는 노드</b>, 데이터베이스 서버, 네트워크 장비, 온프레미스 서버는
+      여전히 누군가 설정해야 하고 거기가 Ansible의 자리다.</p>
+    </div>
+
+    <h2 id="inventory">2. 인벤토리</h2>
+    <p>어떤 서버들을 관리하는지 적는 파일이다.</p>
+    <pre><code># inventory.yml
+all:
+  children:
+    web:
+      hosts:
+        web01:
+          ansible_host: 10.0.1.11
+        web02:
+          ansible_host: 10.0.1.12
+      vars:
+        app_port: 8000
+
+    db:
+      hosts:
+        db01:
+          ansible_host: 10.0.2.21
+
+  vars:
+    ansible_user: deploy
+    ansible_ssh_private_key_file: ~/.ssh/id_ed25519</code></pre>
+    <pre><code>ansible-inventory -i inventory.yml --list       # 파싱 결과 확인
+ansible-inventory -i inventory.yml --graph
+ansible web -i inventory.yml -m ping            # 연결 확인</code></pre>
+    <p>그룹으로 묶으면 "web 그룹 전체에" 같은 지정이 가능해진다.
+    그룹은 중첩할 수 있고, 한 호스트가 여러 그룹에 속할 수도 있다.</p>
+
+    <h2 id="adhoc">3. 애드혹 명령</h2>
+    <p>플레이북을 쓰기 전에, 한 번만 실행하고 싶을 때 쓴다.</p>
+    <pre><code>ansible all -i inventory.yml -m ping
+ansible web -i inventory.yml -m command -a "uptime"
+ansible web -i inventory.yml -m apt -a "name=nginx state=present" --become
+ansible all -i inventory.yml -m setup            # 수집된 사실(facts) 전부 보기</code></pre>
+    <p><code>--become</code>이 <code>sudo</code>에 해당한다. Stage 1에서 배운 대로
+    필요한 작업에만 붙인다.</p>
+    <p><code>-m setup</code>이 보여주는 <b>facts</b>는 대상 서버에서 수집한 정보다 —
+    OS 종류, 메모리, IP, 디스크. 플레이북 안에서 <code>ansible_facts</code>로 참조해
+    "우분투면 apt, 로키면 dnf" 같은 분기를 만든다.</p>
+
+    <h2 id="playbook">4. 플레이북</h2>
+    <p>여러 작업을 순서대로 적은 YAML이다. <code>weatherboard</code>가 돌 서버를 만들어 보자.</p>
+    <pre><code># site.yml
+- name: weatherboard 실행 환경 구성
+  hosts: web
+  become: true
+
+  vars:
+    app_user: weatherboard
+    app_dir: /opt/weatherboard
+    app_port: 8000
+
+  tasks:
+    - name: 필요한 패키지 설치
+      ansible.builtin.apt:
+        name:
+          - python3
+          - python3-venv
+          - nginx
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: 애플리케이션 사용자 생성
+      ansible.builtin.user:
+        name: "{{ app_user }}"
+        system: true
+        shell: /usr/sbin/nologin
+        home: "{{ app_dir }}"
+
+    - name: 애플리케이션 디렉터리
+      ansible.builtin.file:
+        path: "{{ app_dir }}"
+        state: directory
+        owner: "{{ app_user }}"
+        group: "{{ app_user }}"
+        mode: "0755"
+
+    - name: systemd 유닛 배치
+      ansible.builtin.template:
+        src: templates/weatherboard.service.j2
+        dest: /etc/systemd/system/weatherboard.service
+        mode: "0644"
+      notify: restart weatherboard
+
+    - name: 서비스 활성화
+      ansible.builtin.systemd_service:
+        name: weatherboard
+        enabled: true
+        state: started
+        daemon_reload: true
+
+  handlers:
+    - name: restart weatherboard
+      ansible.builtin.systemd_service:
+        name: weatherboard
+        state: restarted
+        daemon_reload: true</code></pre>
+    <pre><code>ansible-playbook -i inventory.yml site.yml --syntax-check
+ansible-playbook -i inventory.yml site.yml --check --diff    # 드라이런
+ansible-playbook -i inventory.yml site.yml</code></pre>
+
+    <div class="callout">
+      <p class="callout-title">💡 --check --diff 를 먼저 돌린다</p>
+      <p>Terraform의 <code>plan</code>에 해당한다. 실제로 바꾸지 않고 무엇이 바뀔지 보여준다.
+      <code>--diff</code>를 함께 주면 파일 내용의 차이까지 보여준다.
+      <b>완벽하지는 않다</b> — 앞 작업의 결과에 의존하는 뒤 작업은 정확히 예측하지 못한다.
+      그래도 프로덕션에 돌리기 전 습관으로 삼을 값어치가 있다.</p>
+    </div>
+
+    <h2 id="idempotent">5. 멱등성 — 이 단계의 핵심</h2>
+    <p><b>몇 번을 돌려도 결과가 같아야 한다.</b> 이것이 Ansible의 설계 원칙이고,
+    플레이북이 스크립트와 다른 결정적 이유다.</p>
+    <pre><code>PLAY RECAP ****************************************************
+web01 : ok=5  changed=5  unreachable=0  failed=0    ← 첫 실행
+web01 : ok=5  changed=0  unreachable=0  failed=0    ← 두 번째 (이래야 정상)</code></pre>
+    <p>두 번째 실행에서 <code>changed=0</code>이 나오는 것이 목표다.
+    <code>changed</code>가 계속 나온다면 그 작업이 멱등하지 않은 것이고,
+    핸들러가 매번 서비스를 재시작해 <b>불필요한 다운타임</b>을 만든다.</p>
+
+    <p>대부분의 모듈은 멱등하다. 깨뜨리는 것은 대개 <code>command</code>와 <code>shell</code>이다.</p>
+    <pre><code># 멱등하지 않다 — 매번 실행되고 매번 changed
+- name: 압축 해제
+  ansible.builtin.shell: tar xzf /tmp/app.tar.gz -C /opt
+
+# 멱등하다 — 전용 모듈은 상태를 확인한다
+- name: 압축 해제
+  ansible.builtin.unarchive:
+    src: /tmp/app.tar.gz
+    dest: /opt
+    remote_src: true
+    creates: /opt/app/bin/run          # 이 파일이 있으면 건너뛴다</code></pre>
+
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>피할 것</th><th>대신 쓸 것</th></tr></thead>
+        <tbody>
+          <tr><td><code>shell: apt install ...</code></td><td><code>ansible.builtin.apt</code></td></tr>
+          <tr><td><code>shell: mkdir -p ...</code></td><td><code>ansible.builtin.file</code></td></tr>
+          <tr><td><code>shell: echo ... &gt;&gt; file</code></td><td><code>lineinfile</code> / <code>blockinfile</code></td></tr>
+          <tr><td><code>shell: systemctl restart ...</code></td><td><code>systemd_service</code> + 핸들러</td></tr>
+          <tr><td><code>shell: git clone ...</code></td><td><code>ansible.builtin.git</code></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>정말 <code>command</code>를 써야 한다면 조건을 붙여 멱등하게 만든다.</p>
+    <pre><code>- name: 초기화 스크립트 (한 번만)
+  ansible.builtin.command: /opt/app/init.sh
+  args:
+    creates: /opt/app/.initialized      # 이 파일이 있으면 실행하지 않는다
+
+- name: 상태를 확인하고 필요할 때만
+  ansible.builtin.command: /usr/bin/app-migrate
+  register: migrate
+  changed_when: "'applied' in migrate.stdout"
+  failed_when: migrate.rc != 0 and 'already' not in migrate.stderr</code></pre>
+    <p><code>changed_when</code>과 <code>failed_when</code>이 중요하다.
+    Ansible은 <code>command</code>가 성공하면 무조건 <code>changed</code>로 본다.
+    실제로 무언가 바뀌었을 때만 <code>changed</code>가 되도록 우리가 알려 줘야 한다.</p>
+
+    <h2 id="vars">6. 변수와 템플릿</h2>
+    <p>변수는 여러 곳에서 올 수 있고 우선순위가 있다(뒤가 이긴다).</p>
+    <ol>
+      <li><code>group_vars/all.yml</code> — 전체 기본값</li>
+      <li><code>group_vars/web.yml</code> — 그룹별</li>
+      <li><code>host_vars/web01.yml</code> — 호스트별</li>
+      <li>플레이북의 <code>vars:</code></li>
+      <li><code>-e "key=value"</code> — 명령행 (가장 강함)</li>
+    </ol>
+    <pre><code>ansible-playbook -i inventory.yml site.yml -e "app_port=9000"</code></pre>
+
+    <h3>Jinja2 템플릿</h3>
+    <pre><code># templates/weatherboard.service.j2
+[Unit]
+Description=weatherboard
+After=network.target
+
+[Service]
+Type=simple
+User={{ app_user }}
+WorkingDirectory={{ app_dir }}
+Environment=HOST=127.0.0.1
+Environment=PORT={{ app_port }}
+ExecStart={{ app_dir }}/.venv/bin/python -m weatherboard.app
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target</code></pre>
+    <p>Stage 4에서 손으로 쓰던 systemd 유닛이 여기서 템플릿이 된다.
+    환경마다 다른 값만 변수로 빼면 파일 하나로 모든 환경을 덮는다.</p>
+
+    <pre><code># 조건과 반복
+- name: 우분투에서만
+  ansible.builtin.apt:
+    name: nginx
+  when: ansible_facts['os_family'] == "Debian"
+
+- name: 여러 디렉터리 생성
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+  loop:
+    - /opt/app/logs
+    - /opt/app/config</code></pre>
+
+    <h2 id="handlers">7. 핸들러</h2>
+    <p>핸들러는 <b>무언가 실제로 바뀌었을 때만</b> 실행되는 작업이다.
+    설정 파일이 바뀌었을 때만 서비스를 재시작하는 데 쓴다.</p>
+    <pre><code>  tasks:
+    - name: nginx 설정 배치
+      ansible.builtin.template:
+        src: templates/weatherboard.conf.j2
+        dest: /etc/nginx/sites-available/weatherboard
+      notify: reload nginx        # 바뀌었을 때만 알린다
+
+  handlers:
+    - name: reload nginx
+      ansible.builtin.systemd_service:
+        name: nginx
+        state: reloaded</code></pre>
+    <p>Stage 6에서 배운 <code>reload</code>와 <code>restart</code>의 차이가 여기서 그대로 쓰인다.
+    설정 변경에는 <code>reload</code>다.</p>
+    <div class="callout warn">
+      <p class="callout-title">⚠ 핸들러는 플레이 끝에 한 번만 실행된다</p>
+      <p>다섯 작업이 같은 핸들러를 <code>notify</code>해도 <b>한 번만</b> 돈다. 좋은 설계다.
+      다만 그래서 <b>플레이 중간에</b> 서비스를 재시작해야 하는 경우에는 맞지 않는다.
+      그럴 때는 <code>meta: flush_handlers</code>로 그 자리에서 실행시킬 수 있다.</p>
+    </div>
+    <pre><code>    - name: 여기까지의 핸들러를 지금 실행
+      ansible.builtin.meta: flush_handlers</code></pre>
+
+    <h2 id="roles">8. 롤</h2>
+    <p>플레이북이 길어지면 롤로 나눈다. Terraform의 모듈과 같은 발상이다.</p>
+    <pre><code>roles/
+└── weatherboard/
+    ├── tasks/main.yml
+    ├── handlers/main.yml
+    ├── templates/weatherboard.service.j2
+    ├── files/
+    ├── defaults/main.yml      # 가장 낮은 우선순위 기본값
+    ├── vars/main.yml          # 높은 우선순위 값
+    └── meta/main.yml          # 의존 롤</code></pre>
+    <pre><code># site.yml
+- name: 웹 서버 구성
+  hosts: web
+  become: true
+  roles:
+    - common
+    - weatherboard
+    - nginx</code></pre>
+    <p>디렉터리 구조가 정해져 있어서 <code>tasks/main.yml</code>, <code>handlers/main.yml</code>은
+    자동으로 읽힌다. <code>templates/</code>와 <code>files/</code>의 경로도 자동으로 잡혀
+    상대 경로를 적을 필요가 없다.</p>
+    <pre><code>ansible-galaxy init roles/weatherboard      # 구조를 만들어 준다
+ansible-galaxy install -r requirements.yml # 남의 롤 가져오기</code></pre>
+
+    <h2 id="vault">9. Vault — 비밀 다루기</h2>
+    <p>DB 비밀번호나 API 키를 플레이북에 평문으로 둘 수는 없다.
+    <code>ansible-vault</code>가 파일을 암호화한다.</p>
+    <pre><code>ansible-vault create group_vars/prod/vault.yml     # 새로 만들기
+ansible-vault edit group_vars/prod/vault.yml       # 수정
+ansible-vault view group_vars/prod/vault.yml       # 보기
+ansible-vault encrypt existing.yml                 # 기존 파일 암호화
+
+ansible-playbook site.yml --ask-vault-pass
+ansible-playbook site.yml --vault-password-file ~/.vault-pass    # CI에서</code></pre>
+    <p>암호화된 파일은 Git에 커밋해도 된다 — 그것이 목적이다.
+    <b>암호만 저장소 밖에 둔다.</b></p>
+
+    <div class="callout">
+      <p class="callout-title">💡 변수 이름은 밖에, 값만 안에</p>
+      <p>vault 파일 안의 변수를 직접 참조하면, 그 변수가 어디서 오는지 알기 어려워진다.
+      관례는 vault에 <code>vault_db_password</code>로 넣고, 평문 파일에서
+      <code>db_password: "{{ vault_db_password }}"</code>로 연결하는 것이다.
+      그러면 <b>어떤 비밀이 쓰이는지는 보이고 값만 감춰진다.</b></p>
+    </div>
+    <div class="callout warn">
+      <p class="callout-title">⚠ vault는 만능이 아니다</p>
+      <p>암호 하나로 모든 비밀이 풀린다. 그 암호를 아는 사람은 전부를 안다.
+      규모가 커지면 클라우드의 시크릿 관리 서비스나 HashiCorp Vault(이름이 같지만 다른 것)로
+      옮기고, Ansible은 그것을 <b>조회만</b> 하게 만든다. Stage 14의 주제다.</p>
+    </div>
+
+    <h2 id="pitfalls">자주 하는 실수</h2>
+
+    <h3>두 번째 실행에도 changed가 나온다</h3>
+    <pre><code>PLAY RECAP ****
+web01 : ok=8  changed=3  ...        ← 두 번째 실행인데 3개가 바뀌었다?</code></pre>
+    <p>멱등하지 않은 작업이 있다는 뜻이다. <code>-v</code>로 어느 작업인지 찾는다.
+    범인은 대개 <code>command</code>/<code>shell</code>이거나, 매번 내용이 달라지는
+    템플릿(타임스탬프를 넣었다든지)이다. 핸들러가 매번 돌아 <b>서비스가 매번 재시작</b>되고 있으니
+    반드시 고쳐야 한다.</p>
+
+    <h3>Failed to connect to the host via ssh</h3>
+    <pre><code>fatal: [web01]: UNREACHABLE! =&gt; {"msg": "Failed to connect to the host via ssh:
+Permission denied (publickey)."}</code></pre>
+    <p>Stage 1의 그 에러가 그대로 나온다. Ansible을 의심하기 전에 <b>SSH로 직접</b> 붙어 본다.</p>
+    <pre><code>ssh -i ~/.ssh/id_ed25519 deploy@10.0.1.11        # 이게 되면 Ansible 설정 문제
+ansible web -i inventory.yml -m ping -vvv        # 어떤 명령을 실행하는지 다 보여준다</code></pre>
+
+    <h3>sudo: a password is required</h3>
+    <pre><code>fatal: [web01]: FAILED! =&gt; {"msg": "Missing sudo password"}</code></pre>
+    <p><code>become: true</code>를 썼는데 대상 사용자가 비밀번호 없는 sudo가 아닌 것이다.
+    <code>--ask-become-pass</code>(<code>-K</code>)로 물어보게 하거나,
+    대상 서버의 sudoers를 설정한다.</p>
+
+    <h3>변수가 정의되지 않았다</h3>
+    <pre><code>fatal: [web01]: FAILED! =&gt; {"msg": "The task includes an option with an
+undefined variable. The error was: 'app_port' is undefined"}</code></pre>
+    <p>변수 이름 오타이거나, 있어야 할 <code>group_vars</code> 파일이 그 호스트에
+    적용되지 않은 것이다. 무엇이 실제로 보이는지 확인한다.</p>
+    <pre><code>ansible web01 -i inventory.yml -m debug -a "var=hostvars[inventory_hostname]"</code></pre>
+    <p>기본값이 있어야 하는 변수는 <code>defaults/main.yml</code>에 두거나
+    <code>{{ app_port | default(8000) }}</code>로 방어한다.</p>
+
+    <h3>플레이북이 느리다</h3>
+    <p>서버가 늘어나면 눈에 띄게 느려진다. 세 가지가 효과가 크다.</p>
+    <pre><code># ansible.cfg
+[defaults]
+forks = 20                    # 동시에 몇 대씩 (기본 5)
+gathering = smart             # facts를 매번 다시 모으지 않는다
+
+[ssh_connection]
+pipelining = True             # SSH 왕복 횟수를 줄인다</code></pre>
+    <p>필요 없는 플레이에서는 <code>gather_facts: false</code>로 아예 끌 수도 있다.
+    facts 수집은 서버마다 수 초씩 걸린다.</p>
+
+    <h2 id="exercises">직접 해보기</h2>
+
+    <h3>과제 1 — localhost로 시작하기</h3>
+    <p>서버가 없어도 된다. <code>localhost</code>를 대상으로 디렉터리를 만들고
+    템플릿에서 파일을 렌더링하는 플레이북을 쓴다.</p>
+    <pre><code>ansible-playbook -i localhost, -c local site.yml</code></pre>
+    <p><b>검증:</b> <code>--syntax-check</code>가 통과하는가.
+    <code>--check --diff</code>가 만들려는 파일의 내용을 보여주는가.</p>
+
+    <h3>과제 2 — 멱등성 확인</h3>
+    <p>이 과제가 이 단계의 핵심이다. 과제 1의 플레이북을 <b>두 번 연속</b> 실행한다.</p>
+    <pre><code>ansible-playbook -i localhost, -c local site.yml | tail -3
+ansible-playbook -i localhost, -c local site.yml | tail -3</code></pre>
+    <p>그다음 일부러 <code>shell: mkdir -p /tmp/x</code> 같은 작업을 넣어
+    <code>changed</code>가 계속 나오게 만들고, <code>creates:</code>나 전용 모듈로 고친다.</p>
+    <p><b>검증:</b> 두 번째 실행이 <code>changed=0</code>인가.
+    멱등하지 않던 작업을 어떻게 고쳤는지 설명할 수 있는가.</p>
+
+    <h3>과제 3 — weatherboard 배포 플레이북</h3>
+    <p>빈 서버(또는 Stage 7의 우분투 컨테이너)를 <code>weatherboard</code>가 도는 상태로 만든다.
+    패키지 설치 → 사용자 생성 → 코드 배치 → 가상환경 → systemd 유닛 → 서비스 시작.</p>
+    <p><b>검증:</b> 깨끗한 서버에서 한 번에 성공하는가.
+    두 번째 실행이 <code>changed=0</code>인가. <code>curl localhost:8000/healthz</code>가 응답하는가.</p>
+
+    <h3>과제 4 — 핸들러가 필요할 때만 도는지</h3>
+    <p>템플릿을 <code>notify</code>로 핸들러에 연결하고, (1) 아무것도 안 바꾸고 실행,
+    (2) 템플릿 변수를 바꾸고 실행 두 경우를 비교한다.</p>
+    <p><b>검증:</b> 1번에서 핸들러가 <b>실행되지 않고</b>, 2번에서만 실행되는가.
+    이것이 왜 중요한지(불필요한 재시작 = 다운타임) 설명할 수 있는가.</p>
+
+    <h3>과제 5 — vault로 비밀 감추기</h3>
+    <p>API 키를 vault 파일에 넣고 플레이북에서 참조한다. 파일을 <code>cat</code>해서
+    실제로 암호화됐는지 확인하고, Git에 커밋해도 되는지 판단한다.</p>
+    <p><b>검증:</b> <code>cat</code>했을 때 평문이 안 보이는가.
+    <code>--ask-vault-pass</code> 없이 실행하면 실패하는가.
+    vault 암호 자체는 어디에 뒀는가(저장소 밖이어야 한다).</p>
+
+    <h2 id="checklist">체크리스트</h2>
+    <p class="muted">브라우저에 저장된다. 끝낸 항목을 표시하며 진행하자.</p>
+    <div class="progress-bar" data-progress-for="stage-11"><i></i></div>
+    <p class="muted"><small data-progress-label></small></p>
+    <ul class="checklist" data-progress="stage-11">
+      <li><input type="checkbox" id="s11-c1"><label for="s11-c1">Terraform과 Ansible의 경계를 예를 들어 설명할 수 있다</label></li>
+      <li><input type="checkbox" id="s11-c2"><label for="s11-c2">Ansible이 에이전트 없이 SSH로 동작한다는 것과 그 의미를 안다</label></li>
+      <li><input type="checkbox" id="s11-c3"><label for="s11-c3">인벤토리를 그룹으로 구성하고 <code>-m ping</code>으로 연결을 확인했다</label></li>
+      <li><input type="checkbox" id="s11-c4"><label for="s11-c4"><code>--check --diff</code>로 드라이런을 돌려 봤고, 한계도 안다</label></li>
+      <li><input type="checkbox" id="s11-c5"><label for="s11-c5">두 번째 실행에서 <code>changed=0</code>을 달성했다 (과제 2)</label></li>
+      <li><input type="checkbox" id="s11-c6"><label for="s11-c6">멱등하지 않은 <code>shell</code> 작업을 전용 모듈이나 <code>creates:</code>로 고쳤다</label></li>
+      <li><input type="checkbox" id="s11-c7"><label for="s11-c7"><code>changed_when</code>이 왜 필요한지 설명할 수 있다</label></li>
+      <li><input type="checkbox" id="s11-c8"><label for="s11-c8">Jinja2 템플릿으로 systemd 유닛을 생성했다</label></li>
+      <li><input type="checkbox" id="s11-c9"><label for="s11-c9">변수 우선순위(group_vars → host_vars → -e)를 확인했다</label></li>
+      <li><input type="checkbox" id="s11-c10"><label for="s11-c10">핸들러가 변경이 있을 때만 도는 것을 두 경우로 비교해 확인했다 (과제 4)</label></li>
+      <li><input type="checkbox" id="s11-c11"><label for="s11-c11">핸들러가 플레이 끝에 한 번만 실행된다는 것과 <code>flush_handlers</code>를 안다</label></li>
+      <li><input type="checkbox" id="s11-c12"><label for="s11-c12">플레이북을 롤로 나눠 봤다</label></li>
+      <li><input type="checkbox" id="s11-c13"><label for="s11-c13">빈 서버를 <code>weatherboard</code>가 도는 상태로 만들었다 (과제 3)</label></li>
+      <li><input type="checkbox" id="s11-c14"><label for="s11-c14"><code>ansible-vault</code>로 비밀을 암호화하고 암호는 저장소 밖에 뒀다 (과제 5)</label></li>
+      <li><input type="checkbox" id="s11-c15"><label for="s11-c15">SSH 연결 실패를 만나면 Ansible보다 <code>ssh</code>를 먼저 확인한다</label></li>
+    </ul>
+
+    <h2 id="further">더 읽을거리</h2>
+    <ul>
+      <li><a href="https://docs.ansible.com/ansible/latest/">Ansible Documentation</a> — 공식 문서</li>
+      <li><a href="https://docs.ansible.com/ansible/latest/collections/ansible/builtin/index.html">ansible.builtin 모듈 목록</a> — <code>shell</code>을 쓰기 전에 여기서 찾는다</li>
+      <li><a href="https://docs.ansible.com/ansible/latest/tips_tricks/ansible_tips_tricks.html">Best Practices</a> — 디렉터리 구성과 관례</li>
+      <li><a href="https://ansible.readthedocs.io/projects/lint/">ansible-lint</a> — 나쁜 패턴을 자동으로 잡아 준다</li>
+      <li><a href="https://docs.ansible.com/ansible/latest/vault_guide/index.html">Vault Guide</a> — 비밀 관리</li>
+      <li><a href="https://galaxy.ansible.com/">Ansible Galaxy</a> — 공개 롤과 컬렉션</li>
+    </ul>
+
+    <div class="callout ok">
+      <p class="callout-title">✓ 다음 단계로 가기 전에</p>
+      <p>Stage 10과 11로 인프라를 만들고 설정하는 일이 전부 코드가 됐다.
+      그런데 그 인프라가 <b>어디서 도는지</b>는 아직 제대로 다루지 않았다.
+      Stage 12에서 클라우드로 간다 — IAM, 네트워크, 매니지드 서비스,
+      그리고 초보자가 가장 많이 데는 비용까지.</p>
     </div>
 
     <div class="pager">
