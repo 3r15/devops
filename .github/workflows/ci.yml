@@ -19,3 +19,6 @@ jobs:
 
       - name: Internal links resolve
         run: python3 tools/check_links.py
+
+      - name: Page structure and progress keys are sound
+        run: python3 tools/check_structure.py

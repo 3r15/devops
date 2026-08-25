@@ -119,6 +119,7 @@ python3 tools/scaffold.py     # 단계 스텁이 없으면 만들어 줍니다
 ```bash
 python3 tools/scaffold.py --check    # 파생 페이지가 데이터와 일치하는가
 python3 tools/check_links.py         # 링크와 앵커가 다 살아 있는가
+python3 tools/check_structure.py     # 태그 균형과 진행률 키 충돌
 python3 -m http.server 8000 --directory site   # 눈으로 확인
 ```
 

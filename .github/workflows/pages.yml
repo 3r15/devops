@@ -29,6 +29,9 @@ jobs:
       - name: Check internal links
         run: python3 tools/check_links.py
 
+      - name: Check page structure
+        run: python3 tools/check_structure.py
+
       - uses: actions/configure-pages@v5
         with:
           # 저장소에서 Pages가 아직 켜져 있지 않으면 워크플로가 직접 켠다.
