@@ -32,14 +32,456 @@
       <p class="lead">리버스 프록시, 가상 호스트, TLS, 로드밸런싱, 정적 자원 서빙.</p>
       <div class="hero-meta">
         <span>예상 <b>14</b>시간</span>
-        <span><span class="badge">예정</span></span>
+        <span><span class="badge done">완료</span></span>
       </div>
     </section>
 
-    <div class="placeholder">
-      <h2>아직 작성 중입니다</h2>
-      <p>이 단계의 본문은 준비 중입니다. 학습 계획에 따라 순서대로 채워집니다.</p>
-      <p><a href="../../plan.html">전체 학습 계획 보기 →</a></p>
+    <h2 id="goals">이 단계를 끝내면</h2>
+    <ul>
+      <li>애플리케이션 앞에 리버스 프록시를 세우고 왜 필요한지 설명할 수 있다.</li>
+      <li>502와 504를 보고 어디를 봐야 하는지 즉시 판단할 수 있다.</li>
+      <li>HTTPS를 붙이고 인증서를 자동 갱신되게 만들 수 있다.</li>
+      <li>액세스 로그와 에러 로그를 구분해 읽고, 응답 시간을 로그에 남길 수 있다.</li>
+      <li>설정을 바꿀 때 서비스를 끊지 않고 반영할 수 있다.</li>
+    </ul>
+
+    <h2 id="prereq">준비물</h2>
+    <ul>
+      <li>Stage 5의 <code>weatherboard</code>. 이번 단계에서 이것을 Nginx 뒤에 둔다.</li>
+      <li>Nginx.</li>
+      <li>(선택) 실제 도메인 하나. TLS 절을 끝까지 해보려면 필요하다. 없으면 자체 서명으로 연습한다.</li>
+    </ul>
+    <pre><code>sudo apt update &amp;&amp; sudo apt install -y nginx
+systemctl status nginx
+curl -I localhost          # HTTP/1.1 200 OK — 기본 페이지가 뜬다</code></pre>
+
+    <nav class="toc">
+      <p>목차</p>
+      <ol>
+        <li><a href="#why">왜 앞단이 필요한가</a></li>
+        <li><a href="#config">설정 파일의 구조</a></li>
+        <li><a href="#static">정적 파일 서빙</a></li>
+        <li><a href="#proxy">리버스 프록시</a></li>
+        <li><a href="#tls">HTTPS 붙이기</a></li>
+        <li><a href="#balance">로드밸런싱</a></li>
+        <li><a href="#logs">로그 읽기</a></li>
+        <li><a href="#tune">타임아웃과 크기 제한</a></li>
+        <li><a href="#apache">Apache와의 차이</a></li>
+      </ol>
+    </nav>
+
+    <h2 id="why">1. 왜 앞단이 필요한가</h2>
+    <p>Stage 5의 <code>weatherboard</code>는 8000번 포트에서 혼자 돌고 있다. 그대로 인터넷에
+    노출하지 않는 이유가 여럿 있다.</p>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>앞단이 하는 일</th><th>없으면</th></tr></thead>
+        <tbody>
+          <tr><td>TLS 종료 (HTTPS 처리)</td><td>애플리케이션마다 인증서를 다뤄야 한다</td></tr>
+          <tr><td>정적 파일 서빙</td><td>이미지 한 장에도 파이썬 프로세스가 붙잡힌다</td></tr>
+          <tr><td>느린 클라이언트 흡수</td><td>모바일 회선 하나가 워커 하나를 오래 점유한다</td></tr>
+          <tr><td>여러 백엔드로 분배</td><td>확장이 불가능하다</td></tr>
+          <tr><td>80 → 443 리다이렉트, 헤더 추가</td><td>애플리케이션 코드에 섞인다</td></tr>
+          <tr><td>낮은 포트(80/443) 점유</td><td>애플리케이션을 root로 띄워야 한다</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>정리하면 <b>애플리케이션은 비즈니스 로직만, 앞단은 HTTP의 잡일 전부</b>다.
+    이 분리가 이후 모든 단계의 전제가 된다 — Stage 8의 Ingress도 결국 같은 역할이다.</p>
+
+    <h2 id="config">2. 설정 파일의 구조</h2>
+    <pre><code>/etc/nginx/
+├── nginx.conf                 # 전역 설정. 대개 손댈 일이 없다
+├── sites-available/           # 사이트 설정을 여기에 쓰고
+│   ├── default
+│   └── weatherboard
+├── sites-enabled/             # 여기에 심볼릭 링크를 걸어 활성화한다
+│   └── weatherboard -&gt; ../sites-available/weatherboard
+└── conf.d/                    # 패키지가 넣는 조각들</code></pre>
+    <p>Debian/Ubuntu의 관례가 <code>sites-available</code> + <code>sites-enabled</code>다.
+    파일을 지우지 않고 링크만 끊어 비활성화할 수 있어 되돌리기 쉽다.</p>
+    <pre><code>sudo ln -s /etc/nginx/sites-available/weatherboard /etc/nginx/sites-enabled/
+sudo rm /etc/nginx/sites-enabled/default      # 기본 페이지 비활성화 (파일은 남는다)</code></pre>
+
+    <p>설정은 블록의 중첩이다. 안쪽이 바깥쪽을 덮어쓴다.</p>
+    <pre><code>http {                      # 전체 HTTP 설정
+  server {                  # 하나의 가상 호스트
+    listen 80;
+    server_name example.com;
+
+    location /static/ {     # 경로별 규칙
+      root /var/www;
+    }
+  }
+}</code></pre>
+
+    <div class="callout warn">
+      <p class="callout-title">⚠ 반영 순서를 지킨다</p>
+      <p>설정을 고쳤으면 <b>반드시</b> 문법 검사를 먼저 한다. 검사 없이 재시작하면
+      문법 오류일 때 Nginx가 뜨지 않아 서비스가 통째로 죽는다.</p>
+      <pre><code>sudo nginx -t                    # 문법 검사 — 항상 먼저
+sudo systemctl reload nginx      # 무중단 반영 (기존 연결은 유지)
+sudo systemctl restart nginx     # 완전 재시작 (연결이 끊긴다)</code></pre>
+      <p><code>reload</code>는 기존 워커가 처리 중인 요청을 끝내고 물러난다.
+      설정 변경에는 언제나 <code>reload</code>를 쓴다. <code>restart</code>는 정말 필요할 때만.</p>
+    </div>
+
+    <h2 id="static">3. 정적 파일 서빙</h2>
+    <pre><code># /etc/nginx/sites-available/weatherboard
+server {
+    listen 80;
+    server_name _;                      # 아무 호스트명이나 받는다
+
+    root /var/www/weatherboard;
+    index index.html;
+
+    location / {
+        try_files $uri $uri/ =404;      # 파일 → 디렉터리 → 없으면 404
+    }
+
+    location /assets/ {
+        expires 7d;                      # 브라우저 캐시 7일
+        add_header Cache-Control "public, immutable";
+    }
+}</code></pre>
+
+    <div class="callout">
+      <p class="callout-title">💡 root와 alias는 다르다</p>
+      <p><code>location /assets/</code>에서 <code>root /var/www</code>면 실제 경로는
+      <code>/var/www/assets/...</code>다(URL 경로가 <b>붙는다</b>).
+      <code>alias /var/www/static/</code>면 <code>/var/www/static/...</code>다(URL 경로가 <b>대체된다</b>).
+      404가 나는데 파일은 분명히 있다면 십중팔구 이 둘을 혼동한 것이다.
+      <code>error_log</code>에 Nginx가 찾으려 한 실제 경로가 찍히니 그것을 보자.</p>
+    </div>
+
+    <h2 id="proxy">4. 리버스 프록시</h2>
+    <p>이제 <code>weatherboard</code>를 뒤에 둔다. Stage 5에서 기본 <code>HOST</code>가
+    <code>127.0.0.1</code>이었던 것이 여기서 정확히 맞아떨어진다 — 애플리케이션은
+    밖에서 직접 접근할 수 없고, 오직 Nginx만 접근한다.</p>
+    <pre><code>server {
+    listen 80;
+    server_name weather.example.com;
+
+    location / {
+        proxy_pass http://127.0.0.1:8000;
+
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location /healthz {
+        proxy_pass http://127.0.0.1:8000/healthz;
+        access_log off;                 # 헬스체크로 로그를 채우지 않는다
+    }
+}</code></pre>
+    <p>네 개의 <code>proxy_set_header</code>가 중요하다. 프록시를 거치면 애플리케이션이 보는
+    출발지 IP는 전부 <code>127.0.0.1</code>(Nginx)이 되고, 원래 요청이 HTTPS였는지도 모른다.
+    이 헤더들이 그 정보를 넘겨준다.</p>
+    <ul>
+      <li><code>Host</code> — 사용자가 요청한 도메인. 애플리케이션이 링크를 만들 때 쓴다</li>
+      <li><code>X-Real-IP</code>, <code>X-Forwarded-For</code> — 진짜 클라이언트 IP</li>
+      <li><code>X-Forwarded-Proto</code> — 원래 요청이 <code>https</code>였는지</li>
+    </ul>
+
+    <div class="callout warn">
+      <p class="callout-title">⚠ proxy_pass의 끝 슬래시가 경로를 바꾼다</p>
+      <pre><code>location /api/ {
+    proxy_pass http://127.0.0.1:8000;    # → /api/users 그대로 전달
+}
+location /api/ {
+    proxy_pass http://127.0.0.1:8000/;   # → /users  (/api/ 가 잘린다)
+}</code></pre>
+      <p>슬래시 하나로 백엔드가 받는 경로가 달라진다. 의도한 쪽이 아니면 백엔드에서 404가 난다.
+      <code>curl -v</code>로 확인하고, 애플리케이션 로그에 찍힌 경로와 대조하자.</p>
+    </div>
+
+    <h2 id="tls">5. HTTPS 붙이기</h2>
+    <p>Let's Encrypt는 무료로 인증서를 발급하고 자동 갱신해 준다. certbot이 Nginx 설정까지
+    고쳐 준다.</p>
+    <pre><code>sudo apt install -y certbot python3-certbot-nginx
+sudo certbot --nginx -d weather.example.com</code></pre>
+    <p>발급에는 도메인이 <b>이 서버를 가리키고</b> 80번 포트가 <b>인터넷에서 접근 가능</b>해야 한다
+    (Let's Encrypt가 소유권을 확인하러 온다). Stage 2의 도구가 여기서 쓰인다.</p>
+    <pre><code>dig +short weather.example.com     # 이 서버 IP가 나오는가
+nc -zv weather.example.com 80      # 밖에서 80이 열려 있는가</code></pre>
+
+    <p>certbot이 만들어 주는 설정은 대략 이렇다.</p>
+    <pre><code>server {
+    listen 443 ssl;
+    http2 on;
+    server_name weather.example.com;
+
+    ssl_certificate     /etc/letsencrypt/live/weather.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/weather.example.com/privkey.pem;
+
+    location / {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+
+server {                                  # 80은 443으로 넘긴다
+    listen 80;
+    server_name weather.example.com;
+    return 301 https://$host$request_uri;
+}</code></pre>
+    <div class="callout">
+      <p class="callout-title">💡 fullchain.pem을 쓴다</p>
+      <p>Stage 2의 "curl은 되는데 브라우저는 안 된다"가 바로 이것이다.
+      <code>cert.pem</code>(서버 인증서만) 대신 <code>fullchain.pem</code>(중간 인증서 포함)을 써야
+      모든 클라이언트가 검증에 성공한다. certbot은 알아서 <code>fullchain</code>을 쓴다.</p>
+    </div>
+
+    <h3>갱신 확인</h3>
+    <pre><code>sudo certbot renew --dry-run       # 실제로 갱신하지 않고 절차만 시험
+systemctl list-timers certbot.timer</code></pre>
+    <p>인증서는 90일짜리다. 자동 갱신 타이머가 도는지 <b>지금 확인해 두자</b> —
+    3개월 뒤 새벽에 확인하게 되는 것보다 낫다. Stage 4에서 배운 systemd timer가 여기 쓰인다.</p>
+
+    <h3>도메인이 없다면</h3>
+    <pre><code>sudo openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+  -keyout /etc/ssl/private/selfsigned.key \
+  -out /etc/ssl/certs/selfsigned.crt \
+  -subj "/CN=localhost"</code></pre>
+    <p>자체 서명 인증서는 브라우저가 경고를 띄운다. 연습용으로만 쓰고,
+    <code>curl -k</code>로 접속해 TLS 자체는 동작하는 것을 확인하는 용도다.</p>
+
+    <h2 id="balance">6. 로드밸런싱</h2>
+    <pre><code>upstream weatherboard {
+    server 127.0.0.1:8000;
+    server 127.0.0.1:8001;
+    server 127.0.0.1:8002 backup;      # 다른 게 다 죽었을 때만
+}
+
+server {
+    listen 80;
+    location / {
+        proxy_pass http://weatherboard;
+    }
+}</code></pre>
+    <p>기본 분배 방식은 라운드로빈이다. 필요에 따라 바꾼다.</p>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>지시어</th><th>동작</th><th>쓸 때</th></tr></thead>
+        <tbody>
+          <tr><td>(기본)</td><td>순서대로 돌아가며</td><td>백엔드가 동일할 때</td></tr>
+          <tr><td><code>least_conn</code></td><td>연결이 가장 적은 곳으로</td><td>요청 처리 시간이 들쭉날쭉할 때</td></tr>
+          <tr><td><code>ip_hash</code></td><td>클라이언트 IP로 고정</td><td>세션이 서버에 붙어 있을 때</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="callout">
+      <p class="callout-title">💡 ip_hash가 필요하다면 설계를 의심하자</p>
+      <p>특정 서버에 세션이 묶여 있으면 그 서버가 죽을 때 사용자도 함께 로그아웃된다.
+      확장도 어려워진다. 세션을 Redis나 DB 같은 <b>공용 저장소</b>로 빼는 편이 낫고,
+      Stage 8의 쿠버네티스에서는 사실상 필수다.</p>
+    </div>
+
+    <h2 id="logs">7. 로그 읽기</h2>
+    <pre><code>tail -f /var/log/nginx/access.log     # 누가 무엇을 요청했나
+tail -f /var/log/nginx/error.log      # 무엇이 잘못됐나</code></pre>
+    <p>두 로그의 역할이 다르다. <b>액세스 로그는 트래픽, 에러 로그는 원인</b>이다.
+    502가 났다면 액세스 로그에는 "502를 응답했다"만 있고, <b>왜</b>는 에러 로그에 있다.</p>
+
+    <h3>응답 시간을 로그에 남기기</h3>
+    <p>기본 로그 형식에는 응답 시간이 없다. 느린 요청을 찾으려면 직접 넣어야 한다.</p>
+    <pre><code># /etc/nginx/nginx.conf 의 http { } 안
+log_format timed '$remote_addr - $remote_user [$time_local] '
+                 '"$request" $status $body_bytes_sent '
+                 'rt=$request_time urt=$upstream_response_time';
+
+access_log /var/log/nginx/access.log timed;</code></pre>
+    <ul>
+      <li><code>$request_time</code> — 요청을 받아 응답을 다 보낼 때까지의 <b>전체</b> 시간</li>
+      <li><code>$upstream_response_time</code> — 백엔드가 답하는 데 걸린 시간</li>
+    </ul>
+    <p>둘의 차이가 크면 백엔드가 아니라 <b>네트워크나 느린 클라이언트</b>가 원인이다.
+    이 구분이 Stage 13(모니터링)에서 지연 시간을 볼 때 그대로 쓰인다.</p>
+
+    <pre><code># 느린 요청 상위 10개 — Stage 1의 파이프라인이 여기서 쓰인다
+awk '{print $NF, $0}' /var/log/nginx/access.log | sort -rn | head -10
+
+# 상태 코드별 개수
+awk '{print $9}' /var/log/nginx/access.log | sort | uniq -c | sort -rn</code></pre>
+
+    <h2 id="tune">8. 타임아웃과 크기 제한</h2>
+    <pre><code>server {
+    client_max_body_size 10m;        # 업로드 최대 크기 (기본 1m)
+
+    location / {
+        proxy_pass http://127.0.0.1:8000;
+
+        proxy_connect_timeout 5s;    # 백엔드에 연결하기까지
+        proxy_send_timeout   30s;    # 요청을 보내는 동안
+        proxy_read_timeout   30s;    # 응답을 기다리는 동안 → 넘으면 504
+    }
+}</code></pre>
+    <p><code>proxy_read_timeout</code>이 504를 만드는 값이다. 무작정 늘리는 것은 답이 아니다 —
+    백엔드가 30초씩 걸리는 이유를 먼저 봐야 한다. 다만 리포트 생성처럼 원래 오래 걸리는
+    엔드포인트가 있다면 <b>그 <code>location</code>에만</b> 늘려 준다.</p>
+
+    <h3>보안 헤더 몇 가지</h3>
+    <pre><code>add_header X-Content-Type-Options "nosniff" always;
+add_header X-Frame-Options "SAMEORIGIN" always;
+add_header Strict-Transport-Security "max-age=31536000" always;   # HTTPS일 때만
+server_tokens off;                    # 응답 헤더에서 버전 숨기기</code></pre>
+    <div class="callout warn">
+      <p class="callout-title">⚠ HSTS는 되돌리기 어렵다</p>
+      <p><code>Strict-Transport-Security</code>는 브라우저에게 "앞으로 이 도메인은 무조건 HTTPS로만
+      접속하라"고 <code>max-age</code> 기간 동안 기억시킨다. HTTPS 설정이 확실히 자리 잡은 뒤에
+      켜고, 처음에는 짧은 <code>max-age</code>로 시작하자. 이 주제는 Stage 14에서 다시 다룬다.</p>
+    </div>
+
+    <h2 id="apache">9. Apache와의 차이</h2>
+    <p>Apache는 여전히 널리 쓰인다. 개념은 같고 이름만 다르다.</p>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>개념</th><th>Nginx</th><th>Apache</th></tr></thead>
+        <tbody>
+          <tr><td>가상 호스트</td><td><code>server { }</code></td><td><code>&lt;VirtualHost&gt;</code></td></tr>
+          <tr><td>경로별 규칙</td><td><code>location { }</code></td><td><code>&lt;Location&gt;</code>, <code>&lt;Directory&gt;</code></td></tr>
+          <tr><td>프록시</td><td><code>proxy_pass</code></td><td><code>ProxyPass</code></td></tr>
+          <tr><td>설정 검사</td><td><code>nginx -t</code></td><td><code>apachectl configtest</code></td></tr>
+          <tr><td>활성화</td><td>심볼릭 링크</td><td><code>a2ensite</code> / <code>a2enmod</code></td></tr>
+          <tr><td>디렉터리별 재정의</td><td>없음 (의도적)</td><td><code>.htaccess</code></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>가장 큰 차이는 동시성 모델이다. Apache는 전통적으로 연결마다 프로세스나 스레드를 쓰고,
+    Nginx는 이벤트 루프로 적은 프로세스가 많은 연결을 처리한다. 그래서 동시 연결이 많은
+    환경에서 Nginx가 메모리를 훨씬 덜 쓴다. <code>.htaccess</code>가 없는 것도 의도적이다 —
+    매 요청마다 디렉터리를 뒤지는 비용을 없앤 것이다.</p>
+
+    <h2 id="pitfalls">자주 하는 실수</h2>
+
+    <h3>502 Bad Gateway</h3>
+    <pre><code>curl -I http://localhost
+# HTTP/1.1 502 Bad Gateway
+
+tail -2 /var/log/nginx/error.log
+# connect() failed (111: Connection refused) while connecting to upstream,
+# upstream: "http://127.0.0.1:8000/"</code></pre>
+    <p>백엔드에 연결하지 못했다는 뜻이다. Stage 2의 <code>refused</code>가 여기 그대로 나온다 —
+    <b>패킷은 도착했고 그 포트에 아무도 없다.</b> 순서대로 확인한다.</p>
+    <pre><code>systemctl status weatherboard        # 애플리케이션이 떠 있나
+sudo ss -lntp | grep 8000            # 그 포트를 정말 듣고 있나
+curl -I http://127.0.0.1:8000        # Nginx를 빼고 직접 붙어 보기</code></pre>
+    <p>세 번째가 성공하는데 Nginx만 502라면 <code>proxy_pass</code>의 주소나 포트가 틀린 것이다.</p>
+
+    <h3>504 Gateway Timeout</h3>
+    <p>백엔드에 <b>연결은 됐는데</b> 정해진 시간 안에 응답이 오지 않은 것이다.
+    502와 달리 애플리케이션은 살아 있다. 애플리케이션 쪽을 본다 — 느린 쿼리, 외부 API 대기,
+    무한 루프. <code>proxy_read_timeout</code>을 늘리는 것은 원인을 찾은 뒤의 선택이지 첫 대응이 아니다.</p>
+
+    <h3>403 Forbidden — 파일은 분명히 있는데</h3>
+    <pre><code>tail -1 /var/log/nginx/error.log
+# open() "/var/www/weatherboard/index.html" failed (13: Permission denied)</code></pre>
+    <p>Stage 1의 권한이 여기서 돌아온다. Nginx는 <code>www-data</code> 사용자로 돈다.
+    파일을 읽을 권한이 있어야 하고, <b>거기까지 가는 모든 상위 디렉터리</b>에
+    실행 권한(<code>x</code>)이 있어야 한다.</p>
+    <pre><code>namei -l /var/www/weatherboard/index.html    # 경로의 각 단계별 권한을 한눈에
+sudo chown -R www-data:www-data /var/www/weatherboard
+sudo chmod 755 /var/www /var/www/weatherboard</code></pre>
+
+    <h3>설정을 고쳤는데 반영되지 않는다</h3>
+    <p>Stage 1에서 본 패턴이다. 확인 순서는 이렇다.</p>
+    <pre><code>sudo nginx -T | grep -n "server_name"    # Nginx가 실제로 읽고 있는 전체 설정
+ls -l /etc/nginx/sites-enabled/          # 심볼릭 링크를 걸었나
+sudo nginx -t &amp;&amp; sudo systemctl reload nginx</code></pre>
+    <p><code>nginx -T</code>(대문자)는 모든 include를 펼친 <b>최종 설정</b>을 보여준다.
+    "분명히 고쳤는데"의 답이 대개 여기 있다 — 고친 파일이 활성화되지 않았거나,
+    다른 <code>server</code> 블록이 먼저 매칭된 것이다.</p>
+
+    <h3>기본 사이트가 계속 뜬다</h3>
+    <p>요청한 <code>Host</code>와 맞는 <code>server_name</code>이 없으면 Nginx는
+    <b>첫 번째 server 블록</b>으로 보낸다. <code>sites-enabled/default</code>가 남아 있으면
+    그게 잡아채는 것이다. 링크를 끊거나, 내 블록에 <code>default_server</code>를 지정한다.</p>
+    <pre><code>sudo rm /etc/nginx/sites-enabled/default
+# 또는
+listen 80 default_server;</code></pre>
+
+    <h2 id="exercises">직접 해보기</h2>
+
+    <h3>과제 1 — weatherboard를 Nginx 뒤에 두기</h3>
+    <p><code>weatherboard</code>를 systemd 서비스로 만들고(Stage 4의 유닛 파일),
+    Nginx가 80번에서 받아 8000번으로 넘기게 한다. 애플리케이션은
+    <code>127.0.0.1</code>에만 바인딩된 상태를 유지한다.</p>
+    <p><b>검증:</b> 밖에서 <code>curl http://&lt;서버IP&gt;/</code>는 되고
+    <code>curl http://&lt;서버IP&gt;:8000/</code>은 <b>안 되는가</b>(Stage 2의 timeout/refused).
+    <code>/healthz</code>가 액세스 로그에 안 남는가.</p>
+
+    <h3>과제 2 — 502와 504를 직접 만들기</h3>
+    <p>이 과제가 이 단계의 핵심이다.</p>
+    <pre><code># 502: 백엔드를 멈춘다
+sudo systemctl stop weatherboard
+curl -I http://localhost
+tail -2 /var/log/nginx/error.log
+
+# 504: 백엔드를 느리게 만든다
+# app.py의 do_GET 맨 앞에 time.sleep(40) 을 넣고 재시작
+# nginx의 proxy_read_timeout 은 기본 60s 이므로 30s로 낮춘다
+curl -I http://localhost</code></pre>
+    <p><b>검증:</b> 두 경우의 <code>error.log</code> 메시지가 어떻게 다른가.
+    각각을 보고 "애플리케이션이 죽었다" / "애플리케이션이 느리다"를 구분해 말할 수 있는가.</p>
+
+    <h3>과제 3 — HTTPS 붙이기</h3>
+    <p>도메인이 있으면 certbot으로, 없으면 자체 서명으로 443을 열고 80을 리다이렉트한다.
+    갱신 타이머까지 확인한다.</p>
+    <p><b>검증:</b> <code>curl -I http://&lt;도메인&gt;</code>이 <code>301</code>과
+    <code>Location: https://...</code>를 주는가. <code>openssl s_client</code>로 확인한 인증서 체인에
+    중간 인증서가 포함되어 있는가(Stage 2의 방법). <code>certbot renew --dry-run</code>이 성공하는가.</p>
+
+    <h3>과제 4 — 응답 시간 로그와 느린 요청 찾기</h3>
+    <p><code>log_format</code>에 <code>$request_time</code>과 <code>$upstream_response_time</code>을
+    추가하고, 백엔드에 인위적인 지연을 넣어 두 값의 차이를 관찰한다.</p>
+    <p><b>검증:</b> 백엔드를 느리게 했을 때 두 값이 <b>함께</b> 커지는가.
+    그렇다면 이 로그로 "백엔드가 느린 것"과 "네트워크가 느린 것"을 어떻게 구분할지 설명할 수 있는가.</p>
+
+    <h3>과제 5 — 로드밸런싱</h3>
+    <p><code>weatherboard</code>를 포트만 바꿔 두 개 띄우고 <code>upstream</code>으로 묶는다.
+    한쪽을 죽였을 때 서비스가 계속되는지 확인한다.</p>
+    <p><b>검증:</b> 반복 요청 시 두 백엔드에 번갈아 로그가 남는가.
+    하나를 죽인 뒤에도 <code>curl</code>이 200을 받는가(첫 요청이 잠깐 느려질 수 있다 — 왜인지 생각해 보자).</p>
+
+    <h2 id="checklist">체크리스트</h2>
+    <p class="muted">브라우저에 저장된다. 끝낸 항목을 표시하며 진행하자.</p>
+    <div class="progress-bar" data-progress-for="stage-06"><i></i></div>
+    <p class="muted"><small data-progress-label></small></p>
+    <ul class="checklist" data-progress="stage-06">
+      <li><input type="checkbox" id="s06-c1"><label for="s06-c1">애플리케이션 앞에 프록시를 두는 이유를 셋 이상 댈 수 있다</label></li>
+      <li><input type="checkbox" id="s06-c2"><label for="s06-c2"><code>nginx -t</code> → <code>reload</code> 순서를 지켰고, <code>reload</code>와 <code>restart</code>의 차이를 안다</label></li>
+      <li><input type="checkbox" id="s06-c3"><label for="s06-c3"><code>sites-available</code>/<code>sites-enabled</code> 구조로 사이트를 켜고 껐다</label></li>
+      <li><input type="checkbox" id="s06-c4"><label for="s06-c4"><code>weatherboard</code>를 프록시 뒤에 두고 8000번은 외부에서 막았다 (과제 1)</label></li>
+      <li><input type="checkbox" id="s06-c5"><label for="s06-c5">네 개의 <code>proxy_set_header</code>가 각각 무엇을 전달하는지 설명할 수 있다</label></li>
+      <li><input type="checkbox" id="s06-c6"><label for="s06-c6"><code>proxy_pass</code>의 끝 슬래시 유무로 백엔드 경로가 달라지는 것을 확인했다</label></li>
+      <li><input type="checkbox" id="s06-c7"><label for="s06-c7">502를 만들고 <code>error.log</code>에서 원인 줄을 찾았다 (과제 2)</label></li>
+      <li><input type="checkbox" id="s06-c8"><label for="s06-c8">504를 만들고 502와 무엇이 다른지 설명했다 (과제 2)</label></li>
+      <li><input type="checkbox" id="s06-c9"><label for="s06-c9">HTTPS를 붙이고 80을 443으로 리다이렉트했다 (과제 3)</label></li>
+      <li><input type="checkbox" id="s06-c10"><label for="s06-c10">인증서 자동 갱신이 설정되어 있음을 <code>renew --dry-run</code>으로 확인했다</label></li>
+      <li><input type="checkbox" id="s06-c11"><label for="s06-c11"><code>fullchain.pem</code>을 써야 하는 이유를 Stage 2의 체인 문제와 연결해 설명할 수 있다</label></li>
+      <li><input type="checkbox" id="s06-c12"><label for="s06-c12"><code>$request_time</code>과 <code>$upstream_response_time</code>을 로그에 남기고 차이를 관찰했다 (과제 4)</label></li>
+      <li><input type="checkbox" id="s06-c13"><label for="s06-c13">403이 났을 때 <code>namei -l</code>로 경로 권한을 확인했다</label></li>
+      <li><input type="checkbox" id="s06-c14"><label for="s06-c14"><code>nginx -T</code>로 실제 적용 중인 최종 설정을 확인해 봤다</label></li>
+      <li><input type="checkbox" id="s06-c15"><label for="s06-c15">백엔드 두 개를 <code>upstream</code>으로 묶고 하나를 죽여도 서비스가 유지되는 것을 확인했다 (과제 5)</label></li>
+    </ul>
+
+    <h2 id="further">더 읽을거리</h2>
+    <ul>
+      <li><a href="https://nginx.org/en/docs/">Nginx Documentation</a> — 지시어별 공식 레퍼런스</li>
+      <li><a href="https://docs.nginx.com/nginx/admin-guide/web-server/reverse-proxy/">Nginx Reverse Proxy 가이드</a> — 프록시 설정 전반</li>
+      <li><a href="https://ssl-config.mozilla.org/">Mozilla SSL Configuration Generator</a> — 서버와 지원 범위를 고르면 TLS 설정을 만들어 준다</li>
+      <li><a href="https://letsencrypt.org/docs/">Let's Encrypt Documentation</a> — 발급과 갱신</li>
+      <li><a href="https://httpd.apache.org/docs/current/">Apache HTTP Server Documentation</a> — Apache를 만나게 됐을 때</li>
+    </ul>
+
+    <div class="callout ok">
+      <p class="callout-title">✓ 다음 단계로 가기 전에</p>
+      <p>지금 <code>weatherboard</code>는 서버 하나에 손으로 설치된 상태다.
+      다른 서버에 똑같이 올리려면 파이썬 설치부터 Nginx 설정까지 전부 다시 해야 한다.
+      Stage 7에서 이 전부를 이미지 하나로 묶는다 — "제 컴퓨터에선 되는데요"가 사라지는 곳이다.</p>
     </div>
 
     <div class="pager">
