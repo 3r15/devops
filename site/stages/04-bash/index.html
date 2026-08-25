@@ -32,14 +32,500 @@
       <p class="lead">파이프라인, 조건/반복, 함수, set -euo pipefail, 실전 운영 스크립트.</p>
       <div class="hero-meta">
         <span>예상 <b>16</b>시간</span>
-        <span><span class="badge">예정</span></span>
+        <span><span class="badge done">완료</span></span>
       </div>
     </section>
 
-    <div class="placeholder">
-      <h2>아직 작성 중입니다</h2>
-      <p>이 단계의 본문은 준비 중입니다. 학습 계획에 따라 순서대로 채워집니다.</p>
-      <p><a href="../../plan.html">전체 학습 계획 보기 →</a></p>
+    <h2 id="goals">이 단계를 끝내면</h2>
+    <ul>
+      <li>매번 치던 명령 묶음을 다시 실행해도 안전한 스크립트로 만들 수 있다.</li>
+      <li>스크립트가 중간에 실패했을 때 조용히 잘못된 상태를 남기지 않게 만들 수 있다.</li>
+      <li>인용부호를 언제 왜 쓰는지 알고, 공백이 든 경로에서 깨지지 않는 코드를 쓴다.</li>
+      <li>ShellCheck 경고를 읽고 고칠 수 있다.</li>
+      <li>셸로 할 일과 파이썬으로 넘길 일을 구분할 수 있다.</li>
+    </ul>
+
+    <h2 id="prereq">준비물</h2>
+    <ul>
+      <li>Stage 1의 리눅스 환경과, 거기서 만든 <code>sysreport.sh</code> 초안.</li>
+      <li>Stage 3의 실습 저장소 — 이번 단계의 결과물을 커밋한다.</li>
+      <li>ShellCheck. 이 단계에서 계속 쓴다.</li>
+    </ul>
+    <pre><code>sudo apt update &amp;&amp; sudo apt install -y shellcheck
+shellcheck --version</code></pre>
+
+    <nav class="toc">
+      <p>목차</p>
+      <ol>
+        <li><a href="#anatomy">스크립트의 뼈대</a></li>
+        <li><a href="#strict">안전 장치 — set -euo pipefail</a></li>
+        <li><a href="#vars">변수와 인용부호</a></li>
+        <li><a href="#flow">조건과 반복</a></li>
+        <li><a href="#func">함수와 종료 코드</a></li>
+        <li><a href="#args">인자 다루기</a></li>
+        <li><a href="#cleanup">정리와 trap</a></li>
+        <li><a href="#lint">ShellCheck와 테스트</a></li>
+        <li><a href="#schedule">주기 실행 — cron과 systemd timer</a></li>
+      </ol>
+    </nav>
+
+    <h2 id="anatomy">1. 스크립트의 뼈대</h2>
+    <pre><code>#!/usr/bin/env bash
+# sysreport.sh — 서버 상태를 한 화면으로 요약한다.
+set -euo pipefail
+
+main() {
+  echo "host: $(hostname)"
+}
+
+main "$@"</code></pre>
+    <p>첫 줄의 <code>#!</code>(셔뱅)은 이 파일을 무엇으로 실행할지 커널에 알려준다.
+    <code>#!/bin/bash</code>보다 <code>#!/usr/bin/env bash</code>가 낫다 — bash 위치가
+    시스템마다 다를 수 있는데 <code>env</code>가 <code>PATH</code>에서 찾아준다.</p>
+    <pre><code>chmod +x sysreport.sh
+./sysreport.sh            # 셔뱅대로 실행
+bash sysreport.sh         # 셔뱅을 무시하고 bash로 실행</code></pre>
+    <div class="callout warn">
+      <p class="callout-title">⚠ sh와 bash는 다르다</p>
+      <p>많은 시스템에서 <code>/bin/sh</code>는 bash가 아니라 dash다. 배열, <code>[[ ]]</code>,
+      <code>local</code> 같은 bash 문법이 <code>sh script.sh</code>로 실행하면 깨진다.
+      셔뱅에 <code>bash</code>라고 썼으면 <b>실행도 bash로</b> 하자.</p>
+    </div>
+
+    <h2 id="strict">2. 안전 장치 — set -euo pipefail</h2>
+    <p>bash의 기본 동작은 초심자에게 위험하다. 실패해도 다음 줄을 계속 실행하고,
+    없는 변수를 빈 문자열로 취급한다. 이 한 줄이 그 둘을 막는다.</p>
+
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>옵션</th><th>기본 동작</th><th>바뀌는 동작</th></tr></thead>
+        <tbody>
+          <tr><td><code>-e</code></td><td>명령이 실패해도 계속 진행</td><td>실패하면 즉시 중단</td></tr>
+          <tr><td><code>-u</code></td><td>정의 안 된 변수는 빈 문자열</td><td>정의 안 된 변수를 쓰면 에러</td></tr>
+          <tr><td><code>-o pipefail</code></td><td>파이프라인은 <b>마지막</b> 명령의 결과만 본다</td><td>중간이 실패하면 전체가 실패</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>왜 필요한지는 이 예가 설명한다.</p>
+    <pre><code># set -u 가 없으면:
+BACKUP_DIR=""            # 오타로 값이 안 들어갔다고 하자
+rm -rf "$BACKUP_DIR"/*   # → rm -rf /*  ← 시스템이 날아간다
+
+# set -e 가 없으면:
+cd /nonexistent          # 실패하지만 그냥 넘어간다
+rm -rf ./old             # 엉뚱한 디렉터리에서 실행된다
+
+# pipefail 이 없으면:
+cat missing.txt | wc -l  # cat은 실패했는데 종료 코드는 wc의 0</code></pre>
+
+    <h3>예외 처리</h3>
+    <p><code>-e</code>가 걸린 상태에서 "실패해도 괜찮은" 명령이 있다면 명시적으로 표시한다.</p>
+    <pre><code>grep -q "pattern" file.txt || true      # 못 찾아도 계속 진행
+
+if grep -q "pattern" file.txt; then     # 조건문 안에서는 -e가 발동하지 않는다
+  echo "찾았다"
+fi
+
+count=$(grep -c "x" file.txt || echo 0) # 실패 시 기본값</code></pre>
+    <p><code>-u</code>를 쓰면서 "없을 수도 있는 변수"를 다룰 때는 기본값 문법을 쓴다.</p>
+    <pre><code>LOG_DIR="${LOG_DIR:-/var/log}"        # 없거나 비었으면 /var/log
+: "${API_KEY:?API_KEY 환경변수가 필요합니다}"   # 없으면 메시지와 함께 종료</code></pre>
+
+    <h2 id="vars">3. 변수와 인용부호</h2>
+    <p>셸 스크립트 버그의 가장 큰 원인 하나를 꼽으라면 인용부호다. 규칙은 단순하다 —
+    <b>변수는 항상 큰따옴표로 감싼다.</b></p>
+    <pre><code>file="my report.txt"
+
+rm $file        # rm "my" "report.txt"  ← 두 파일을 지우려 한다
+rm "$file"      # rm "my report.txt"    ← 의도대로</code></pre>
+
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>표기</th><th>동작</th><th>예</th></tr></thead>
+        <tbody>
+          <tr><td><code>"$var"</code></td><td>변수를 펼치되 분리하지 않음</td><td>거의 항상 이것</td></tr>
+          <tr><td><code>'$var'</code></td><td>펼치지 않음. 글자 그대로</td><td><code>echo '$HOME'</code> → <code>$HOME</code></td></tr>
+          <tr><td><code>$var</code></td><td>펼치고 공백으로 분리</td><td>의도적으로 쪼갤 때만</td></tr>
+          <tr><td><code>"${arr[@]}"</code></td><td>배열의 각 원소를 하나씩</td><td>배열은 이 형태로만</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <pre><code>name="world"
+echo "hello $name"        # hello world
+echo 'hello $name'        # hello $name
+echo "오늘은 $(date +%F)"  # 명령 치환 — $(...)를 쓴다 (백틱은 옛 문법)
+
+readonly CONFIG="/etc/app.conf"   # 바뀌면 안 되는 값
+local tmp                          # 함수 안에서는 local을 붙인다</code></pre>
+
+    <h3>유용한 변수 조작</h3>
+    <pre><code>path="/var/log/app.log"
+echo "${path##*/}"     # app.log      — 마지막 / 뒤 (basename)
+echo "${path%/*}"      # /var/log     — 마지막 / 앞 (dirname)
+echo "${path%.log}"    # /var/log/app — 뒤에서 .log 제거
+echo "${#path}"        # 길이
+
+echo "${name:-기본값}"  # name이 없으면 기본값
+echo "${name^^}"       # 대문자로</code></pre>
+
+    <h2 id="flow">4. 조건과 반복</h2>
+    <pre><code>if [[ -f "$file" ]]; then
+  echo "파일이 있다"
+elif [[ -d "$file" ]]; then
+  echo "디렉터리다"
+else
+  echo "없다"
+fi</code></pre>
+    <div class="callout">
+      <p class="callout-title">💡 [[ ]] 를 쓰자</p>
+      <p><code>[ ]</code>는 옛 문법이라 변수가 비면 문법 오류가 나는 등 함정이 많다.
+      bash에서는 <code>[[ ]]</code>가 더 안전하고 <code>&amp;&amp;</code>, <code>||</code>,
+      정규식 <code>=~</code>도 쓸 수 있다. 다만 <code>sh</code> 호환이 필요하면 <code>[ ]</code>를 써야 한다.</p>
+    </div>
+
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>검사</th><th>뜻</th></tr></thead>
+        <tbody>
+          <tr><td><code>-f "$f"</code> / <code>-d "$f"</code></td><td>일반 파일 / 디렉터리인가</td></tr>
+          <tr><td><code>-e "$f"</code></td><td>존재하는가 (종류 무관)</td></tr>
+          <tr><td><code>-r</code> / <code>-w</code> / <code>-x</code></td><td>읽기 / 쓰기 / 실행 가능한가</td></tr>
+          <tr><td><code>-z "$s"</code> / <code>-n "$s"</code></td><td>비었는가 / 안 비었는가</td></tr>
+          <tr><td><code>"$a" == "$b"</code></td><td>문자열 같은가</td></tr>
+          <tr><td><code>"$a" -eq "$b"</code></td><td>숫자 같은가 (<code>-lt -gt -le -ge -ne</code>)</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>반복</h3>
+    <pre><code>for f in /var/log/*.log; do
+  echo "처리: $f"
+done
+
+for i in {1..5}; do echo "$i"; done
+
+while read -r line; do          # -r 없으면 백슬래시가 먹힌다
+  echo "줄: $line"
+done &lt; input.txt
+
+case "$1" in
+  start) echo "시작" ;;
+  stop)  echo "정지" ;;
+  *)     echo "알 수 없는 명령: $1"; exit 1 ;;
+esac</code></pre>
+
+    <div class="callout warn">
+      <p class="callout-title">⚠ ls의 출력을 for로 돌리지 않는다</p>
+      <p><code>for f in $(ls *.log)</code>는 공백이 든 파일명에서 깨진다. 글롭(<code>for f in *.log</code>)을
+      쓰거나, 재귀가 필요하면 <code>find ... -print0</code>과 <code>read -d ''</code>를 조합한다.</p>
+      <pre><code>while IFS= read -r -d '' f; do
+  echo "$f"
+done &lt; &lt;(find /var/log -name '*.log' -print0)</code></pre>
+    </div>
+
+    <h2 id="func">5. 함수와 종료 코드</h2>
+    <pre><code>log() {
+  printf '[%s] %s\n' "$(date +%H:%M:%S)" "$*" &gt;&amp;2
+}
+
+die() {
+  log "ERROR: $*"
+  exit 1
+}
+
+check_disk() {
+  local threshold="${1:-90}"
+  local used
+  used=$(df --output=pcent / | tail -1 | tr -dc '0-9')
+  (( used &gt;= threshold )) &amp;&amp; return 1
+  return 0
+}
+
+if ! check_disk 80; then
+  die "디스크 사용률이 80%를 넘었다"
+fi</code></pre>
+    <p>함수 안의 변수에는 <code>local</code>을 붙인다. 안 붙이면 전역이 되어, 다른 함수의 같은 이름
+    변수를 조용히 덮어쓴다.</p>
+
+    <div class="callout">
+      <p class="callout-title">💡 로그는 stderr로, 결과는 stdout으로</p>
+      <p>위 <code>log</code> 함수가 <code>&gt;&amp;2</code>로 stderr에 쓰는 이유다.
+      진행 메시지가 stdout에 섞이면, 이 스크립트의 출력을 다른 명령에 파이프로 넘길 때
+      쓰레기가 된다. <b>stdout은 결과, stderr는 사람에게 하는 말</b>로 나누자.</p>
+    </div>
+
+    <h3>종료 코드</h3>
+    <pre><code>command
+echo $?          # 직전 명령의 종료 코드. 0이 성공, 나머지는 실패
+
+exit 0           # 성공
+exit 1           # 일반적인 실패
+exit 2           # 잘못된 사용법 (관례)</code></pre>
+    <p>종료 코드는 스크립트가 자동화 도구와 말하는 유일한 방법이다. cron, CI, 다른 스크립트는
+    출력이 아니라 이 숫자를 본다. <b>실패했으면 반드시 0이 아닌 값으로 끝내야 한다.</b></p>
+
+    <h2 id="args">6. 인자 다루기</h2>
+    <pre><code>echo "$0"     # 스크립트 이름
+echo "$1"     # 첫 번째 인자
+echo "$#"     # 인자 개수
+echo "$@"     # 모든 인자 (항상 "$@"로 감싼다)</code></pre>
+
+    <p>플래그가 필요해지면 <code>while</code>과 <code>case</code>로 파싱한다.</p>
+    <pre><code>usage() {
+  cat &lt;&lt;EOF
+사용법: ${0##*/} [옵션]
+
+  -t, --threshold N   디스크 경고 임계값 (기본 90)
+  -q, --quiet         결과만 출력
+  -h, --help          이 도움말
+EOF
+}
+
+threshold=90
+quiet=false
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -t|--threshold) threshold="$2"; shift 2 ;;
+    -q|--quiet)     quiet=true; shift ;;
+    -h|--help)      usage; exit 0 ;;
+    --)             shift; break ;;
+    -*)             usage &gt;&amp;2; die "알 수 없는 옵션: $1" ;;
+    *)              break ;;
+  esac
+done</code></pre>
+    <p>인자를 받는 옵션(<code>-t</code>)에서 값이 없으면 <code>$2</code>가 없어
+    <code>set -u</code>에 걸린다. 그것이 정확히 <b>원하는 동작</b>이다 — 조용히 넘어가는 것보다 낫다.</p>
+
+    <h2 id="cleanup">7. 정리와 trap</h2>
+    <p>스크립트가 임시 파일을 만들었다면, 성공하든 실패하든 지워야 한다.
+    <code>trap</code>이 그 일을 맡는다.</p>
+    <pre><code>tmpdir=$(mktemp -d)
+trap 'rm -rf "$tmpdir"' EXIT
+
+# 여기서 무슨 일이 일어나든 (성공, 실패, Ctrl+C) tmpdir은 지워진다
+echo "작업 중..." &gt; "$tmpdir/work"</code></pre>
+    <p><code>EXIT</code>는 어떤 이유로 끝나든 발동한다. 시그널을 따로 잡고 싶으면 이렇게 쓴다.</p>
+    <pre><code>trap 'echo "중단됨"; exit 130' INT TERM</code></pre>
+
+    <div class="callout warn">
+      <p class="callout-title">⚠ 중간에 실패해도 시스템을 어중간하게 남기지 않는다</p>
+      <p>서비스를 멈추고 → 파일을 바꾸고 → 다시 시작하는 스크립트가 중간에 죽으면
+      서비스가 멈춘 채로 남는다. <code>trap</code>으로 "무슨 일이 있어도 서비스는 되살린다"를
+      보장하자. 이것이 <code>set -e</code>와 <code>trap</code>을 함께 쓰는 이유다.</p>
+    </div>
+    <pre><code>restore() {
+  systemctl is-active --quiet myapp || systemctl start myapp
+}
+trap restore EXIT
+
+systemctl stop myapp
+# ... 위험한 작업 ...
+systemctl start myapp</code></pre>
+
+    <h3>동시 실행 막기</h3>
+    <pre><code>exec 9&gt;/var/lock/sysreport.lock
+flock -n 9 || die "이미 실행 중이다"</code></pre>
+    <p>cron으로 5분마다 도는 스크립트가 10분 걸리면 두 개가 겹쳐 돈다. <code>flock</code> 두 줄로 막는다.</p>
+
+    <h2 id="lint">8. ShellCheck와 테스트</h2>
+    <pre><code>shellcheck sysreport.sh
+# In sysreport.sh line 12:
+# rm -rf $tmpdir
+#        ^-----^ SC2086: Double quote to prevent globbing and word splitting.</code></pre>
+    <p>ShellCheck는 위에서 설명한 함정을 대부분 자동으로 잡아낸다. 경고 코드(<code>SC2086</code>)를
+    검색하면 왜 문제인지 설명이 나온다. <b>경고 0개를 목표로 삼자</b> — 셸에서 경고는 대체로 진짜 버그다.</p>
+    <p>정말 의도한 것이라면 이유를 적고 예외 처리한다.</p>
+    <pre><code># shellcheck disable=SC2086  # 의도적으로 단어 분리를 이용한다
+command $args</code></pre>
+
+    <h3>디버깅</h3>
+    <pre><code>bash -n script.sh      # 실행하지 않고 문법만 검사
+bash -x script.sh      # 실행되는 명령을 하나씩 출력
+set -x                 # 스크립트 일부만 추적하고 싶을 때
+set +x                 # 추적 끄기</code></pre>
+
+    <h3>간단한 테스트</h3>
+    <p>함수 단위로 잘라 두면 테스트가 쉬워진다. 별도 프레임워크 없이도 이 정도는 된다.</p>
+    <pre><code>#!/usr/bin/env bash
+set -euo pipefail
+source ./sysreport.sh --source-only   # main을 실행하지 않고 함수만 읽기
+
+fail=0
+assert_eq() {
+  if [[ "$1" != "$2" ]]; then
+    echo "FAIL: expected '$2', got '$1'" &gt;&amp;2
+    fail=1
+  fi
+}
+
+assert_eq "$(to_mb 2048)" "2"
+exit "$fail"</code></pre>
+    <p>스크립트 끝의 <code>main "$@"</code>를 조건부로 만들면 source가 가능해진다.</p>
+    <pre><code>[[ "${1:-}" == "--source-only" ]] || main "$@"</code></pre>
+
+    <h2 id="schedule">9. 주기 실행 — cron과 systemd timer</h2>
+    <pre><code>crontab -e
+# 분 시 일 월 요일  명령
+  */5 *  *  *  *   /usr/local/bin/sysreport.sh &gt;&gt; /var/log/sysreport.log 2&gt;&amp;1
+  0   3  *  *  *   /usr/local/bin/backup.sh          # 매일 새벽 3시</code></pre>
+    <div class="callout warn">
+      <p class="callout-title">⚠ cron의 환경은 내 셸과 다르다</p>
+      <p>cron은 최소한의 <code>PATH</code>만 갖고 실행한다. 터미널에서는 되던 스크립트가
+      cron에서 <code>command not found</code>로 죽는 가장 흔한 이유다.
+      스크립트 안에서 <b>절대 경로를 쓰거나</b> 맨 위에서 <code>PATH</code>를 명시하자.
+      출력도 반드시 리다이렉트해야 한다 — 안 그러면 메일로 쌓이거나 그냥 사라진다.</p>
+    </div>
+
+    <p>요즘은 systemd timer를 더 많이 쓴다. 로그가 저널로 모이고, 실패를 <code>systemctl</code>로
+    확인할 수 있으며, 놓친 실행을 따라잡을 수 있다.</p>
+    <pre><code># /etc/systemd/system/sysreport.service
+[Unit]
+Description=Server health report
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/sysreport.sh
+
+# /etc/systemd/system/sysreport.timer
+[Unit]
+Description=Run sysreport every 5 minutes
+
+[Timer]
+OnCalendar=*:0/5
+Persistent=true
+
+[Install]
+WantedBy=timers.target</code></pre>
+    <pre><code>sudo systemctl daemon-reload
+sudo systemctl enable --now sysreport.timer
+systemctl list-timers sysreport.timer
+journalctl -u sysreport.service --since today</code></pre>
+    <p>Stage 1에서 배운 <code>daemon-reload</code>가 여기서 또 나온다. 유닛 파일을 고쳤으면 항상 먼저다.</p>
+
+    <div class="callout">
+      <p class="callout-title">💡 셸을 그만둘 때</p>
+      <p>다음 중 하나라도 해당되면 파이썬으로 넘길 때다 — JSON/YAML을 파싱한다,
+      숫자 계산이 필요하다, 자료구조가 중첩된다, 에러 처리가 <code>||</code>로 감당이 안 된다,
+      스크립트가 200줄을 넘는다. 셸은 <b>명령을 이어 붙이는 데</b> 최고고,
+      <b>데이터를 다루는 데</b>는 최악이다. Stage 5가 그 지점을 이어받는다.</p>
+    </div>
+
+    <h2 id="pitfalls">자주 하는 실수</h2>
+
+    <h3>rm: cannot remove '/*': Permission denied — 혹은 더 나쁜 일</h3>
+    <pre><code>BUILD_DIR=""          # 값이 안 들어갔다
+rm -rf "$BUILD_DIR"/  # rm -rf /</code></pre>
+    <p><code>set -u</code>는 <b>정의되지 않은</b> 변수만 잡는다. 위처럼 <b>정의됐지만 빈</b> 변수는
+    통과한다. 위험한 경로를 다룰 때는 직접 검사한다.</p>
+    <pre><code>[[ -n "${BUILD_DIR:-}" ]] || die "BUILD_DIR이 비었다"
+[[ "$BUILD_DIR" != "/" ]] || die "루트는 안 된다"
+rm -rf "${BUILD_DIR:?}"/*     # :? 는 비었으면 에러를 내고 멈춘다</code></pre>
+
+    <h3>syntax error near unexpected token `then'</h3>
+    <pre><code>if [ "$x" = "1" ]then     # ; 가 없다
+# script.sh: line 3: syntax error near unexpected token `then'</code></pre>
+    <p><code>if</code>와 <code>then</code> 사이에는 <code>;</code>나 줄바꿈이 필요하다.
+    <code>[</code> 뒤와 <code>]</code> 앞의 <b>공백</b>도 필수다 — <code>[</code>는 문법이 아니라 명령이기 때문이다.
+    <code>bash -n</code>이나 ShellCheck가 이런 것을 실행 전에 잡아준다.</p>
+
+    <h3>unary operator expected</h3>
+    <pre><code>if [ $answer = "yes" ]; then   # answer가 비어 있으면 → [ = "yes" ]
+# script.sh: line 5: [: =: unary operator expected</code></pre>
+    <p>변수를 인용하지 않아서 빈 값이 사라진 것이다. <code>[[ ]]</code>를 쓰거나
+    <code>"$answer"</code>로 감싸면 해결된다. ShellCheck의 SC2086이 바로 이 경고다.</p>
+
+    <h3>cron에서만 command not found</h3>
+    <pre><code>*/5 * * * * /usr/local/bin/sysreport.sh
+# /usr/local/bin/sysreport.sh: line 8: jq: command not found</code></pre>
+    <p>터미널의 <code>PATH</code>에는 있고 cron의 <code>PATH</code>에는 없는 것이다.
+    실제 cron 환경을 재현해서 확인할 수 있다.</p>
+    <pre><code>env -i /bin/bash --noprofile --norc ./sysreport.sh   # 환경변수 없이 실행해 본다</code></pre>
+    <p>고치는 방법은 스크립트 위쪽에 <code>PATH</code>를 명시하는 것이다.</p>
+    <pre><code>export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"</code></pre>
+
+    <h3>파이프라인이 실패했는데 성공으로 나온다</h3>
+    <pre><code>curl -s https://example.com/data.json | jq '.items'
+echo $?    # jq가 성공했으면 0 — curl이 실패했어도</code></pre>
+    <p><code>set -o pipefail</code>이 없으면 파이프라인의 종료 코드는 <b>마지막</b> 명령의 것이다.
+    중간의 <code>curl</code>이 실패해도 모른다. 개별 결과가 필요하면 <code>PIPESTATUS</code>를 본다.</p>
+    <pre><code>curl -s ... | jq ...
+echo "${PIPESTATUS[@]}"   # 각 단계의 종료 코드 (예: "6 0")</code></pre>
+
+    <h2 id="exercises">직접 해보기</h2>
+
+    <h3>과제 1 — sysreport.sh 완성</h3>
+    <p>Stage 1의 초안을 이 단계의 규격으로 다시 쓴다. 요구 사항은 다음과 같다.</p>
+    <ul>
+      <li><code>set -euo pipefail</code>과 <code>#!/usr/bin/env bash</code></li>
+      <li><code>--threshold N</code>, <code>--quiet</code>, <code>--help</code> 옵션 처리</li>
+      <li>로그는 stderr, 결과는 stdout</li>
+      <li>디스크 사용률이 임계값을 넘으면 종료 코드 <code>1</code></li>
+      <li>임시 파일을 쓴다면 <code>trap ... EXIT</code>으로 정리</li>
+      <li>모든 변수 참조에 인용부호</li>
+    </ul>
+    <p><b>검증:</b> <code>shellcheck sysreport.sh</code>가 경고 0개인가.
+    <code>./sysreport.sh --threshold 1</code>이 종료 코드 1을, <code>--threshold 100</code>이 0을 내는가
+    (<code>echo $?</code>로 확인). <code>--help</code>가 0으로 끝나는가.</p>
+
+    <h3>과제 2 — 실패해도 상태를 남기지 않는 스크립트</h3>
+    <p>Nginx를 멈추고 → 설정 파일을 바꾸고 → 다시 시작하는 스크립트를 쓴다.
+    설정 검사(<code>nginx -t</code>)가 실패하면 원래 설정으로 되돌리고 서비스를 반드시 살린다.</p>
+    <p><b>검증:</b> 일부러 잘못된 설정을 넣고 실행했을 때, 스크립트가 0이 아닌 코드로 끝나면서도
+    <code>systemctl is-active nginx</code>가 <code>active</code>이고 설정 파일이 원본으로 돌아와 있는가.</p>
+
+    <h3>과제 3 — 로그 정리 스크립트</h3>
+    <p>지정한 디렉터리에서 N일보다 오래된 <code>.log</code> 파일을 찾아 압축하고,
+    M일보다 오래된 것은 지우는 스크립트를 쓴다. <b>기본 동작은 dry-run</b>으로 하고,
+    <code>--apply</code>를 줘야 실제로 지우게 한다.</p>
+    <p><b>검증:</b> 공백이 든 파일명(<code>touch "my log.log"</code>)에서도 깨지지 않는가.
+    <code>--apply</code> 없이 실행했을 때 아무 파일도 사라지지 않는가.</p>
+
+    <h3>과제 4 — 타이머로 돌리기</h3>
+    <p>완성한 <code>sysreport.sh</code>를 systemd timer로 5분마다 실행하고,
+    <code>journalctl</code>로 실행 기록을 확인한다. 그다음 스크립트가 실패하도록 만들어
+    실패가 어떻게 보이는지 본다.</p>
+    <p><b>검증:</b> <code>systemctl list-timers</code>에 다음 실행 시각이 보이는가.
+    <code>journalctl -u sysreport.service</code>에서 성공과 실패를 구분할 수 있는가.</p>
+
+    <h2 id="checklist">체크리스트</h2>
+    <p class="muted">브라우저에 저장된다. 끝낸 항목을 표시하며 진행하자.</p>
+    <div class="progress-bar" data-progress-for="stage-04"><i></i></div>
+    <p class="muted"><small data-progress-label></small></p>
+    <ul class="checklist" data-progress="stage-04">
+      <li><input type="checkbox" id="s04-c1"><label for="s04-c1"><code>set -e</code>, <code>-u</code>, <code>pipefail</code>이 각각 무엇을 막는지 예를 들어 설명할 수 있다</label></li>
+      <li><input type="checkbox" id="s04-c2"><label for="s04-c2">인용하지 않은 변수 때문에 깨지는 경우를 직접 재현했다</label></li>
+      <li><input type="checkbox" id="s04-c3"><label for="s04-c3"><code>${var:-기본값}</code>과 <code>${var:?메시지}</code>를 각각 써 봤다</label></li>
+      <li><input type="checkbox" id="s04-c4"><label for="s04-c4">함수에 <code>local</code>을 붙이는 이유를 설명할 수 있다</label></li>
+      <li><input type="checkbox" id="s04-c5"><label for="s04-c5">로그를 stderr로, 결과를 stdout으로 분리했다</label></li>
+      <li><input type="checkbox" id="s04-c6"><label for="s04-c6"><code>--help</code>, <code>--quiet</code>를 포함한 옵션 파싱을 직접 작성했다</label></li>
+      <li><input type="checkbox" id="s04-c7"><label for="s04-c7"><code>trap ... EXIT</code>으로 임시 파일이 항상 정리되는 것을 확인했다</label></li>
+      <li><input type="checkbox" id="s04-c8"><label for="s04-c8">실패해도 서비스를 되살리는 스크립트를 만들고 실제로 실패시켜 확인했다 (과제 2)</label></li>
+      <li><input type="checkbox" id="s04-c9"><label for="s04-c9">공백이 든 파일명에서도 동작하는 반복문을 작성했다 (과제 3)</label></li>
+      <li><input type="checkbox" id="s04-c10"><label for="s04-c10"><code>shellcheck</code> 경고 0개를 달성했다 (과제 1)</label></li>
+      <li><input type="checkbox" id="s04-c11"><label for="s04-c11">종료 코드로 성공/실패를 구분해 반환하고 <code>echo $?</code>로 검증했다</label></li>
+      <li><input type="checkbox" id="s04-c12"><label for="s04-c12"><code>bash -x</code>로 실행 흐름을 추적해 봤다</label></li>
+      <li><input type="checkbox" id="s04-c13"><label for="s04-c13">cron의 PATH가 다르다는 것을 알고 재현해 봤다</label></li>
+      <li><input type="checkbox" id="s04-c14"><label for="s04-c14">systemd timer로 주기 실행을 설정하고 저널에서 확인했다 (과제 4)</label></li>
+      <li><input type="checkbox" id="s04-c15"><label for="s04-c15">셸을 그만두고 파이썬으로 넘어가야 할 신호를 셋 이상 댈 수 있다</label></li>
+    </ul>
+
+    <h2 id="further">더 읽을거리</h2>
+    <ul>
+      <li><a href="https://www.gnu.org/software/bash/manual/bash.html">Bash Reference Manual</a> — 문법이 헷갈릴 때의 원전</li>
+      <li><a href="https://www.shellcheck.net/wiki/">ShellCheck Wiki</a> — 경고 코드(SC2086 등)마다 이유와 고치는 법</li>
+      <li><a href="https://mywiki.wooledge.org/BashPitfalls">Bash Pitfalls</a> — 흔한 함정 모음. 이 단계의 확장판</li>
+      <li><a href="https://google.github.io/styleguide/shellguide.html">Google Shell Style Guide</a> — 팀에서 쓸 규칙이 필요할 때</li>
+      <li><a href="https://www.freedesktop.org/software/systemd/man/latest/systemd.timer.html">systemd.timer(5)</a> — 타이머 유닛 공식 문서</li>
+    </ul>
+
+    <div class="callout ok">
+      <p class="callout-title">✓ 다음 단계로 가기 전에</p>
+      <p>완성한 <code>sysreport.sh</code>를 Stage 3의 저장소에 커밋하자 — PR을 열어 스스로 리뷰해 보면
+      Part 1에서 배운 것이 붙는다. 다음 Stage 5에서는 셸로는 버거운 일을 파이썬으로 넘기고,
+      이 커리큘럼을 관통할 예제 서비스 <code>weatherboard</code>를 만든다.</p>
     </div>
 
     <div class="pager">

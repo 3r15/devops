@@ -30,6 +30,7 @@ site/                    배포되는 정적 사이트
   assets/                공용 CSS/JS
 tools/scaffold.py        curriculum.json → 메인/파트 페이지 생성, 단계 스텁 생성
 tools/check_links.py     사이트 내부 링크 검사
+tools/check_structure.py 태그 균형 · 진행률 키/체크박스 id 충돌 검사
 docs/                    학습 계획 및 집필 가이드
 .claude/                 집필 자동화 (스킬 / 서브에이전트 / 검증 훅)
 ```
@@ -49,11 +50,12 @@ python3 -m http.server 8000 --directory site
 
 ```bash
 python3 tools/scaffold.py       # 메인/파트 페이지 재생성 + 새 단계 스텁 생성
-python3 tools/check_links.py    # 내부 링크 검사
-python3 tools/scaffold.py --check   # CI와 동일한 동기화 검사
+python3 tools/check_links.py       # 내부 링크 검사
+python3 tools/check_structure.py   # 태그 균형과 진행률 키 충돌 검사
+python3 tools/scaffold.py --check  # CI와 동일한 동기화 검사
 ```
 
-두 검사는 PR과 `main` push마다 CI에서도 돌고, `main`에 올라간 `site/`는
+세 검사는 PR과 `main` push마다 CI에서도 돌고, `main`에 올라간 `site/`는
 `.github/workflows/pages.yml`이 GitHub Pages로 배포합니다.
 
 ### 배포 최초 1회 설정

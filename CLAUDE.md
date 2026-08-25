@@ -27,9 +27,10 @@ DevOps 학습 사이트 저장소. 정적 HTML/CSS/JS + GitHub Pages, 빌드 도
 ```bash
 python3 tools/scaffold.py --check    # 생성 페이지가 데이터와 일치하는가
 python3 tools/check_links.py         # 내부 링크/앵커가 살아 있는가
+python3 tools/check_structure.py    # 태그 균형, data-progress·체크박스 id 충돌
 ```
 
-두 명령은 CI(`.github/workflows/ci.yml`)와 배포(`pages.yml`)에서도 돌고,
+세 명령은 CI(`.github/workflows/ci.yml`)와 배포(`pages.yml`)에서도 돌고,
 `.claude/hooks/verify-site.py`가 `site/`·`data/`·`tools/`를 건드린 편집 직후에도 돌린다.
 훅이 exit 2로 막으면 그 자리에서 고친다. 검사를 우회하지 않는다.
 
