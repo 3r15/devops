@@ -17,7 +17,8 @@ DevOps 학습 사이트 저장소. 정적 HTML/CSS/JS + GitHub Pages, 빌드 도
 - **생성 페이지** — `site/index.html`, `site/parts/**`. `tools/scaffold.py`가 만든다.
   **직접 수정하지 않는다.** 고치려면 `data/curriculum.json`을 고치고 생성기를 다시 돌린다.
 - **집필 페이지** — `site/stages/**`, `site/plan.html`, `site/about.html`. 사람이 소유한다.
-  생성기는 `--force` 없이는 덮어쓰지 않는다.
+  생성기는 한 번 만들어진 뒤로는 덮어쓰지 않는다. 스텁으로 되돌리려면
+  `--force --stage N`으로 단계를 지정해야 한다 — 인자 없는 `--force`는 거부된다.
 
 단계를 새로 쓰거나 마무리할 때는 `/new-stage` 스킬을 쓴다.
 
