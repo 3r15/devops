@@ -6,13 +6,16 @@ Two kinds of pages live in site/:
   derived  — index.html and parts/<slug>/index.html are pure functions of
              curriculum.json and are rewritten on every run.
   authored — stages/<nn>-<slug>/index.html holds hand-written lesson content.
-             It is only created when missing (or when --force is passed), so
-             running this tool never eats work.
+             It is only created when missing, so running this tool never eats
+             work. Resetting one back to a stub takes --force --stage N.
 
 Usage:
-    python3 tools/scaffold.py            # refresh derived pages, add new stubs
-    python3 tools/scaffold.py --force    # also overwrite authored stage pages
-    python3 tools/scaffold.py --check    # fail if derived pages are stale
+    python3 tools/scaffold.py                    # refresh derived pages, add new stubs
+    python3 tools/scaffold.py --check            # fail if derived pages are stale
+    python3 tools/scaffold.py --force --stage 2  # reset ONE stage page back to a stub
+
+--force discards hand-written lesson content, so it refuses to run without --stage:
+a bare --force would silently blank every stage already published.
 """
 
 from __future__ import annotations
@@ -318,9 +321,25 @@ def write(path: pathlib.Path, content: str, check: bool, changed: list) -> None:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--force", action="store_true", help="overwrite authored stage pages")
+    ap.add_argument(
+        "--force",
+        action="store_true",
+        help="overwrite authored stage pages back to stubs — requires --stage",
+    )
+    ap.add_argument(
+        "--stage",
+        type=int,
+        metavar="N",
+        help="limit stage handling to this stage number",
+    )
     ap.add_argument("--check", action="store_true", help="report staleness without writing")
     args = ap.parse_args()
+
+    if args.force and args.stage is None:
+        ap.error(
+            "--force discards hand-written stage content, so it must name one stage: "
+            "--force --stage N"
+        )
 
     data = json.loads(DATA.read_text(encoding="utf-8"))
     changed: list = []
@@ -330,6 +349,8 @@ def main() -> int:
         write(SITE / "parts" / part["slug"] / "index.html", build_part(data, part), args.check, changed)
 
     for stage in data["stages"]:
+        if args.stage is not None and stage["n"] != args.stage:
+            continue
         target = SITE / "stages" / stage_dir(stage) / "index.html"
         if target.exists() and not args.force:
             continue
